@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""Mock dbus-send: emulates CMU method-call replies from dev/state.json.
+
+Supports the subset of com.jci.vbs.bcm methods used by gauges-daemon.sh.
+Prints replies in the same textual format as real dbus-send --print-reply.
+"""
+import json, os, sys, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+STATE = os.environ.get("GAUGES_SIM_STATE", os.path.join(HERE, "..", "state.json"))
+
+def read_state():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def reply(lines):
+    print("method return time=%.3f sender=:1.4 -> destination=:1.99 serial=42 reply_serial=2"
+          % time.time())
+    for l in lines:
+        print("   " + l)
+
+def main():
+    args = sys.argv[1:]
+    member = next((a.split(".")[-1] for a in args
+                   if a.startswith("com.jci.vbs.bcm.")), None)
+    s = read_state()
+    if member == "GetCarSpeed":
+        reply(["uint32 %d" % round(s.get("speed_kmh", 0))])
+    elif member == "GetGearPos":
+        reply(["byte %d" % s.get("gear", 0)])
+    elif member == "GetBrkPedalDepressedStatus":
+        reply(["byte %d" % s.get("brake", 0)])
+    else:
+        print("mock dbus-send: unsupported call: %s" % " ".join(args),
+              file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

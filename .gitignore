@@ -1,0 +1,7 @@
+dev/state.json
+dev/out/
+dev/state/
+dist/
+*.log
+__pycache__/
+.DS_Store

@@ -1,0 +1,47 @@
+#!/usr/bin/env python3
+"""Mock dbus-monitor: streams fake com.jci.vbs.vdt signals from dev/state.json.
+
+Raw signal units mirror the assumed CMU scaling (see gauges-daemon.sh):
+throttle in 0.1 %, steering in 0.1 deg, g in 0.001 g, rpm in rpm.
+"""
+import json, os, sys, time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+STATE = os.environ.get("GAUGES_SIM_STATE", os.path.join(HERE, "..", "state.json"))
+IFACE = "com.jci.vbs.vdt"
+PATH = "/com/jci/vbs/vdt"
+
+def read_state():
+    try:
+        with open(STATE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def emit(member, value, serial):
+    print("signal time=%.3f sender=:1.4 -> destination=(null destination) "
+          "serial=%d path=%s; interface=%s; member=%s"
+          % (time.time(), serial, PATH, IFACE, member))
+    print("   int16 %d" % value)
+
+def main():
+    print("signal time=%.3f sender=org.freedesktop.DBus -> destination=:1.99 "
+          "path=/org/freedesktop/DBus; interface=org.freedesktop.DBus; "
+          "member=NameAcquired" % time.time())
+    print('   string ":1.99"')
+    serial = 1
+    while True:
+        s = read_state()
+        emit("EngAout_N_Actl", int(s.get("rpm", 0)), serial); serial += 1
+        emit("ApedPos_Pc_ActlArb", int(s.get("throttle", 0) * 10), serial); serial += 1
+        emit("SteWhlComp_An_Est", int(s.get("steer", 0) * 10), serial); serial += 1
+        emit("Lateral_Acceleration", int(s.get("lat", 0) * 1000), serial); serial += 1
+        emit("VehLong_A_Actl", int(s.get("lon", 0) * 1000), serial); serial += 1
+        sys.stdout.flush()
+        time.sleep(0.1)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (KeyboardInterrupt, BrokenPipeError):
+        sys.exit(0)
