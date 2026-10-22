@@ -17,7 +17,7 @@
 	// ---------------------------------------------------------------- config
 	var CFG = {
 		dataUrl: window.GAUGES_DATA_URL || 'gauges/cardata.json',
-		cssUrl: 'gauges/gauges.css',
+		cssUrl: window.GAUGES_CSS_URL || 'gauges/gauges.css',
 		pollMs: 200,
 		staleMs: 2000,
 		maxRpm: 8000,
