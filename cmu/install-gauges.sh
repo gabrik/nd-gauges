@@ -20,6 +20,15 @@ USERJS="/jci/opera/opera_dir/userjs/ndgauges.js"
 SCRIPTS_DIR="/jci/scripts"
 STATE_DIR="/tmp/nd-gauges"
 
+# Applications-list integration (OEM+ tile instead of just the floating
+# GAUGES button). This is the ONE stock file nd-gauges patches — everything
+# else only adds new files. Backed up before editing and restored on
+# uninstall. See README "Applications-list integration" for why this is
+# needed and what the risk tradeoff is.
+SYSTEM_APP_JS="/jci/gui/apps/system/js/systemApp.js"
+SYSTEM_APP_DICT="/jci/gui/resources/js/system/systemAppDict_en_US.js"
+BACKUP_SUFFIX=".nd-gauges-orig"
+
 log() { printf '%s [nd-gauges] %s\n' "$(date '+%H:%M:%S' 2>/dev/null || echo '?')" "$1" | tee -a "$LOG" >&2; }
 
 popup() { # text
@@ -50,10 +59,92 @@ go_rw() {
 	RW=1
 }
 
+# ---------------------------------------------------- Applications-list patch
+# Adds one row ('nd-gauges') to the real Applications list by editing
+# systemApp.js's _initApplicationsDataList (plain, uncompiled JS, not a
+# compiled .so) and registering the appName in _applicationsCtxtWiseAppNames.
+# Selecting the row is intercepted entirely client-side in gauges.js (it
+# patches framework.sendEventToMmui to catch mmuiEvent 'SelectNdGauges'), so
+# no native/compiled code needs to understand the new row at all.
+
+brace_balance_ok() { # file -> true if "{" count == "}" count (coarse JS sanity check)
+	o=$(grep -o '{' "$1" | wc -l)
+	c=$(grep -o '}' "$1" | wc -l)
+	[ "$o" -eq "$c" ]
+}
+
+patch_applications_list() {
+	if ! [ -f "$SYSTEM_APP_JS" ] || ! [ -f "$SYSTEM_APP_DICT" ]; then
+		log "WARNING: $SYSTEM_APP_JS or dict not found; skipping Applications-list tile (floating GAUGES button still works)"
+		return 1
+	fi
+	if grep -q "'ndgauges'" "$SYSTEM_APP_JS" 2>/dev/null; then
+		log "systemApp.js already patched for nd-gauges"
+		return 0
+	fi
+
+	[ -f "$SYSTEM_APP_JS$BACKUP_SUFFIX" ] || cp -a "$SYSTEM_APP_JS" "$SYSTEM_APP_JS$BACKUP_SUFFIX"
+	[ -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX" ] || cp -a "$SYSTEM_APP_DICT" "$SYSTEM_APP_DICT$BACKUP_SUFFIX"
+
+	_item_file="$STATE_DIR/ndg_app_item.txt"
+	_dict_file="$STATE_DIR/ndg_dict_item.txt"
+	mkdir -p "$STATE_DIR"
+	cat > "$_item_file" << 'EOF'
+        { appData : { appName : 'ndgauges', isVisible : true, audioSourceId : 'None', mmuiEvent : 'SelectNdGauges' }, text1Id : 'NdGauges', disabled : false, itemStyle : 'style01', hasCaret : false }
+EOF
+	cat > "$_dict_file" << 'EOF'
+	"NdGauges" : "nd-gauges",
+EOF
+
+	# 1) add our item to _initApplicationsDataList's items array (anchor is the
+	#    one line with both SelectAndroidAuto and text1Id:'AndroidAuto', —
+	#    unique on firmware 74.00.324/324A, verified against five other
+	#    SelectAndroidAuto occurrences used by other data lists in this file)
+	sed -i "/mmuiEvent : 'SelectAndroidAuto'.*text1Id : 'AndroidAuto',/{
+		s/ }\$/ },/
+		r $_item_file
+	}" "$SYSTEM_APP_JS"
+
+	# 2) register the appName so _buildApplicationsDataList includes it
+	#    (both vehicle-configuration branches of _updateApplicationStructure)
+	sed -i 's/"androidauto"\]/"androidauto","ndgauges"]/g' "$SYSTEM_APP_JS"
+
+	# 3) add the display string
+	sed -i "/\"APDevice\" :/r $_dict_file" "$SYSTEM_APP_DICT"
+
+	rm -f "$_item_file" "$_dict_file"
+
+	if grep -q "'ndgauges'" "$SYSTEM_APP_JS" && grep -q "'SelectNdGauges'" "$SYSTEM_APP_JS" \
+		&& [ "$(grep -c '"ndgauges"\]' "$SYSTEM_APP_JS")" -ge 2 ] \
+		&& grep -q 'NdGauges' "$SYSTEM_APP_DICT" \
+		&& brace_balance_ok "$SYSTEM_APP_JS" && brace_balance_ok "$SYSTEM_APP_DICT"
+	then
+		log "Applications-list patch applied (nd-gauges tile)"
+		return 0
+	fi
+
+	log "ERROR: Applications-list patch failed validation — restoring originals"
+	cp -a "$SYSTEM_APP_JS$BACKUP_SUFFIX" "$SYSTEM_APP_JS"
+	cp -a "$SYSTEM_APP_DICT$BACKUP_SUFFIX" "$SYSTEM_APP_DICT"
+	return 1
+}
+
+restore_applications_list() {
+	if [ -f "$SYSTEM_APP_JS$BACKUP_SUFFIX" ]; then
+		cp -a "$SYSTEM_APP_JS$BACKUP_SUFFIX" "$SYSTEM_APP_JS" && rm -f "$SYSTEM_APP_JS$BACKUP_SUFFIX"
+		log "systemApp.js restored from backup"
+	fi
+	if [ -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX" ]; then
+		cp -a "$SYSTEM_APP_DICT$BACKUP_SUFFIX" "$SYSTEM_APP_DICT" && rm -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX"
+		log "systemAppDict restored from backup"
+	fi
+}
+
 # ------------------------------------------------------------------ uninstall
 if [ -f "$REPO_DIR/UNINSTALL" ]; then
 	popup "Removing nd-gauges..."
 	go_rw
+	restore_applications_list
 	rm -f "$USERJS"
 	rm -rf "$GUI_DIR"
 	rm -f "$SCRIPTS_DIR/gauges-daemon.sh" "$SCRIPTS_DIR/gauges-ctl.sh"
@@ -87,9 +178,10 @@ popup "Installing nd-gauges..."
 # -------------------------------------------------------------------- install
 go_rw
 
-mkdir -p "$GUI_DIR" "$SCRIPTS_DIR"
+mkdir -p "$GUI_DIR" "$GUI_DIR/fonts" "$SCRIPTS_DIR"
 cp payload/app/gauges.css "$GUI_DIR/gauges.css" || { log "ERROR: css copy failed"; exit 1; }
 cp payload/app/gauges.js "$USERJS" || { log "ERROR: userjs copy failed"; exit 1; }
+cp payload/app/fonts/*.ttf "$GUI_DIR/fonts/" || { log "ERROR: font copy failed"; exit 1; }
 cp payload/cmu/scripts/gauges-daemon.sh "$SCRIPTS_DIR/gauges-daemon.sh"
 cp payload/cmu/scripts/gauges-ctl.sh "$SCRIPTS_DIR/gauges-ctl.sh"
 chmod +x "$SCRIPTS_DIR/gauges-daemon.sh" "$SCRIPTS_DIR/gauges-ctl.sh"
@@ -110,10 +202,12 @@ for f in /etc/rc.d/rc.local /jci/scripts/autorun.sh; do
 done
 [ "$HOOKED" = 0 ] && log "NOTE: no known autostart hook found; daemon started for this boot only (use gauges-ctl.sh start over SSH)"
 
+patch_applications_list
+
 log "files installed; starting daemon"
 sh "$SCRIPTS_DIR/gauges-ctl.sh" start >> "$LOG" 2>&1 \
 	&& log "daemon running" || log "WARNING: daemon did not start (check $LOG)"
 
-popup "nd-gauges installed. Open Applications and tap GAUGES. Remove the USB stick."
+popup "nd-gauges installed. Open Applications and select nd-gauges. Remove the USB stick."
 log "install complete"
 exit 0

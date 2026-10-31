@@ -17,7 +17,7 @@ def scenario(t):
     """Return dict of vehicle state at scenario time t (seconds)."""
     cyc = t % 32.0
     s = dict(speed_kmh=0.0, rpm=800, gear=0, brake=0, throttle=0.0,
-             steer=0.0, lat=0.0, lon=0.0)
+             steer=0.0, lat=0.0, lon=0.0, coolant=20.0, oil=20.0)
     if cyc < 4:                                   # idle in neutral
         s.update(rpm=int(800 + 30 * math.sin(t * 2)), gear=0)
     elif cyc < 16:                                # launch through gears 1-4
@@ -54,6 +54,17 @@ def scenario(t):
         k = (cyc - 29) / 3
         s.update(speed_kmh=70 * (1 - k), rpm=int(3000 - 2200 * k), gear=2,
                  brake=1, lon=-0.3)
+
+    # Coolant/oil warm-up: a slow asymptotic curve over wall-clock time (t),
+    # independent of the repeating drive cycle — real engines take minutes,
+    # not seconds, to reach operating temperature. Starts near a cold-soak
+    # ambient and settles near typical SkyActiv operating temps. Oil lags
+    # coolant, same as a real engine (oil warms via contact with hot metal,
+    # not directly from combustion).
+    coolant = 20 + 70 * (1 - math.exp(-t / 180.0))
+    oil = 20 + 75 * (1 - math.exp(-(max(0, t - 30)) / 240.0))
+    s["coolant"] = round(coolant, 1)
+    s["oil"] = round(oil, 1)
     return s
 
 def main():

@@ -36,7 +36,7 @@ python3 - "$GAUGES_OUT" <<'PYEOF'
 import json, sys, time
 d = json.load(open(sys.argv[1]))
 keys = ["ts", "speed_kmh", "gear", "brake", "rpm", "throttle_pct",
-        "steer_deg", "lat_g", "long_g"]
+        "steer_deg", "lat_g", "long_g", "coolant_c", "oil_c"]
 missing = [k for k in keys if k not in d]
 assert not missing, "missing keys: %s" % missing
 assert time.time() - d["ts"] < 5, "stale ts"

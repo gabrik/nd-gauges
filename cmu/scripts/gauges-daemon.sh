@@ -14,6 +14,30 @@
 #   GAUGES_POLL       poll interval sec  (default 0.2)
 #   GAUGES_SPEED_UNIT unit arg for GetCarSpeed (default 0; 0=km/h? calibrate!)
 #   GAUGES_SCALE_*    divisors for raw signal scaling (calibrate on-car)
+#   GAUGES_COOLANT_MEMBER  com.jci.vbs.vdt signal member for coolant temp.
+#                          UNCONFIRMED: coolant temp definitely exists on the
+#                          vehicle bus (it drives the stock analog gauge) but
+#                          the member name isn't in the public dbus docs we
+#                          checked (com.jci.vbs.vdt, com.jci.vbs.eem). This
+#                          default is a plausible guess following this
+#                          interface's own "Signal_Unit_Qualifier" naming
+#                          convention (compare EngAout_N_Actl, ApedPos_Pc_ActlArb)
+#                          — confirm the real name with dbus-monitor on the car
+#                          (see README → Plan B / Calibration) before trusting it.
+#                          Set empty to disable coolant polling entirely.
+#   GAUGES_SCALE_COOLANT   divisor for the raw coolant value (GUESS, calibrate)
+#   GAUGES_COOLANT_OFFSET  added AFTER scaling, e.g. for a Kelvin→Celsius raw
+#                          encoding (GUESS, calibrate)
+#   GAUGES_OIL_MEMBER      com.jci.vbs.vdt signal member for oil temp. Empty
+#                          by default and NOT guessed: SkyActiv engines have no
+#                          physical oil temperature sensor (community OBD-II
+#                          research confirms "oil temp" PIDs on these engines
+#                          are ECU-calculated estimates, not sensor readings),
+#                          so there's no principled signal name to guess at,
+#                          and no confirmation such an estimate is even mirrored
+#                          onto this bus. Leave unset unless you find a real
+#                          member via dbus-monitor; the overlay just shows
+#                          "--" for oil temp when this is empty.
 
 set -u
 
@@ -27,6 +51,15 @@ DBUS_ADDR="unix:path=${DBUS_SERVICE_SOCKET:-/tmp/dbus_service_socket}"
 GAUGES_SCALE_THROTTLE="${GAUGES_SCALE_THROTTLE:-10}"    # 0.1 %  -> %
 GAUGES_SCALE_STEER="${GAUGES_SCALE_STEER:-10}"          # 0.1 deg -> deg
 GAUGES_SCALE_G="${GAUGES_SCALE_G:-1000}"                # 0.001 g -> g
+
+# Coolant/oil temp: see Config comment above. Coolant member name is an
+# UNCONFIRMED guess; oil is off by default (no known sensor on this engine).
+GAUGES_COOLANT_MEMBER="${GAUGES_COOLANT_MEMBER:-EngClnt_Te_Actl}"
+GAUGES_SCALE_COOLANT="${GAUGES_SCALE_COOLANT:-1}"
+GAUGES_COOLANT_OFFSET="${GAUGES_COOLANT_OFFSET:-0}"
+GAUGES_OIL_MEMBER="${GAUGES_OIL_MEMBER:-}"
+GAUGES_SCALE_OIL="${GAUGES_SCALE_OIL:-1}"
+GAUGES_OIL_OFFSET="${GAUGES_OIL_OFFSET:-0}"
 
 PIDFILE="$GAUGES_STATE_DIR/daemon.pid"
 MONPID=0
@@ -50,12 +83,14 @@ trap cleanup INT TERM HUP
 # Signal collector: dbus-monitor -> per-signal raw value files in $STATE_DIR
 # ---------------------------------------------------------------------------
 dbus-monitor --address="$DBUS_ADDR" "type='signal',interface='com.jci.vbs.vdt'" 2>/dev/null |
-awk -v dir="$GAUGES_STATE_DIR" '
-	/member=EngAout_N_Actl/        { want="rpm_raw";   next }
-	/member=ApedPos_Pc_ActlArb/    { want="thr_raw";   next }
-	/member=SteWhlComp_An_Est/     { want="steer_raw"; next }
-	/member=Lateral_Acceleration/  { want="lat_raw";   next }
-	/member=VehLong_A_Actl/        { want="long_raw";  next }
+awk -v dir="$GAUGES_STATE_DIR" -v coolant_member="$GAUGES_COOLANT_MEMBER" -v oil_member="$GAUGES_OIL_MEMBER" '
+	/member=EngAout_N_Actl/        { want="rpm_raw";     next }
+	/member=ApedPos_Pc_ActlArb/    { want="thr_raw";     next }
+	/member=SteWhlComp_An_Est/     { want="steer_raw";   next }
+	/member=Lateral_Acceleration/  { want="lat_raw";     next }
+	/member=VehLong_A_Actl/        { want="long_raw";    next }
+	coolant_member != "" && $0 ~ ("member=" coolant_member) { want="coolant_raw"; next }
+	oil_member != "" && $0 ~ ("member=" oil_member)         { want="oil_raw";     next }
 	want != "" && $1 ~ /^(int16|uint16|int32|uint32|byte|double)$/ {
 		out = dir "/" want
 		print $2 > out
@@ -93,6 +128,12 @@ scale() { # raw divisor -> scaled or null (awk for floats)
 	fi
 }
 
+scale_offset() { # raw divisor offset -> scaled+offset or null (awk for floats)
+	if [ "$1" = null ]; then echo null; else
+		awk "BEGIN{printf \"%.1f\", ($1/$2)+$3}"
+	fi
+}
+
 json_field() { # key value(ornull)
 	if [ "$2" = null ]; then printf '"%s":null' "$1"; else printf '"%s":%s' "$1" "$2"; fi
 }
@@ -112,6 +153,16 @@ while :; do
 	steer=$(scale "$(read_raw steer_raw)" "$GAUGES_SCALE_STEER")
 	lat=$(scale "$(read_raw lat_raw)" "$GAUGES_SCALE_G")
 	lon=$(scale "$(read_raw long_raw)" "$GAUGES_SCALE_G")
+	if [ -n "$GAUGES_COOLANT_MEMBER" ]; then
+		coolant=$(scale_offset "$(read_raw coolant_raw)" "$GAUGES_SCALE_COOLANT" "$GAUGES_COOLANT_OFFSET")
+	else
+		coolant=null
+	fi
+	if [ -n "$GAUGES_OIL_MEMBER" ]; then
+		oil=$(scale_offset "$(read_raw oil_raw)" "$GAUGES_SCALE_OIL" "$GAUGES_OIL_OFFSET")
+	else
+		oil=null
+	fi
 
 	{
 		printf '{"ts":%s,' "$(date +%s)"
@@ -122,7 +173,9 @@ while :; do
 		json_field throttle_pct "$thr"; printf ','
 		json_field steer_deg "$steer"; printf ','
 		json_field lat_g "$lat"; printf ','
-		json_field long_g "$lon"
+		json_field long_g "$lon"; printf ','
+		json_field coolant_c "$coolant"; printf ','
+		json_field oil_c "$oil"
 		printf '}\n'
 	} > "$TMP_OUT" 2>/dev/null && mv "$TMP_OUT" "$GAUGES_OUT" 2>/dev/null
 

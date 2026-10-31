@@ -37,6 +37,11 @@ def main():
         emit("SteWhlComp_An_Est", int(s.get("steer", 0) * 10), serial); serial += 1
         emit("Lateral_Acceleration", int(s.get("lat", 0) * 1000), serial); serial += 1
         emit("VehLong_A_Actl", int(s.get("lon", 0) * 1000), serial); serial += 1
+        # Placeholder member name matching gauges-daemon.sh's default
+        # GAUGES_COOLANT_MEMBER guess (unconfirmed on real hardware; see
+        # that script's header comment). Emitted as-is (no scaling) since
+        # the default GAUGES_SCALE_COOLANT/OFFSET are 1/0.
+        emit("EngClnt_Te_Actl", int(s.get("coolant", 20)), serial); serial += 1
         sys.stdout.flush()
         time.sleep(0.1)
 
