@@ -47,6 +47,47 @@ unescaped. The USB stick carries a file whose *name* is a shell script that find
 the mounted stick (via the `GAUGES.ID` marker + its `cksum`) and runs
 `install-gauges.sh` as root. Same technique as TouchTune (GPL-3.0).
 
+## Research: CMU emulation (QEMU)
+
+Before building the dev harness we attempted to fully emulate the CMU's SH4
+firmware under QEMU so we could run the real JCI daemons and dbus interfaces
+locally. Here is what we tried and where it stands.
+
+### What we did
+
+| Step | Outcome |
+|---|---|
+| Extracted firmware from `cmu150_EU_74.00.324A_update.up` (SH-4A rootfs + kernel) | ✅ Full SH4 Linux rootfs extracted |
+| Built `qemu-system-sh4` + cross-toolchain in Docker (Ubuntu 22.04) | ✅ Kernel and guest image compiled |
+| Booted the stock CMU kernel under QEMU (`-M r2d`, `-cpu sh4a`) | ✅ Kernel boots to init panic (missing `/dev`) |
+| Constructed a minimal ext4 guest disk with busybox userspace | ✅ Shell reachable via serial |
+| Started JCI daemons inside the guest | ❌ Daemons crash — depend on proprietary hardware init (`jci-hwm`, `/dev/cmu*` char devices) |
+| Exposed emulated dbus socket to macOS host | ❌ Not reached — blocked by daemon crash |
+
+### Why it stalled
+
+The JCI middleware stack initialises a chain of proprietary hardware-manager
+daemons (`jci-hwm`, `jci-sm`, `jci-audio`) that open CMU-specific `/dev` nodes
+(power management, audio DSP, CAN bridge). QEMU has no model for these devices,
+and the daemons abort without them — taking dbus with them.
+
+Emulating those devices would require reverse-engineering closed-source kernel
+modules, which is a multi-month effort by itself.
+
+### Plan B — Raspberry Pi probe
+
+Instead of full emulation we will attach a **Raspberry Pi 4** to the CMU's
+exposed UART/SSH interface while the car is running, and proxy the live dbus
+socket to a laptop for offline analysis. This gives us real signal values,
+correct scaling factors, and actual byte mappings for the gear-position enum —
+everything the dev harness currently has to guess.
+
+The QEMU lab scripts live in
+[`MazdaConnect-QEMU`](https://github.com/gabrik/mazda-research/tree/main/MazdaConnect-QEMU)
+(separate repo) for reference.
+
+---
+
 ## Local development & testing (no car needed)
 
 Everything except the final USB install can be tested on a Mac/Linux laptop:
