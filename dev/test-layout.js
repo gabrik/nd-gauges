@@ -26,7 +26,8 @@ const context = new Proxy({
     }
 });
 function element() {
-    const node = {style: {}, appendChild() {}, getContext: () => context};
+    const node = {style: {}, children: [], appendChild(child) { this.children.push(child); },
+        getContext: () => context};
     elements.push(node);
     return node;
 }
@@ -210,4 +211,31 @@ for (const rpm of [undefined, null, NaN, Infinity, -100]) {
 }
 context.measureText = value => ({width: value.length * 11});
 assert.ok(render(sample).includes('91°'), 'legacy canvas with width-only text metrics');
-console.log('PASS: layout, alignment, missing data, pedal behavior, RPM color boundaries and flash phases');
+// Production launches only through the OEM Applications row, never a floating button.
+const productionStart = elements.length;
+const forwarded = [];
+const production = {...sandbox,
+    window: {innerWidth: 800, innerHeight: 480},
+    document: {...sandbox.document,
+        getElementById: id => elements.slice(productionStart).find(node => node.id === id)},
+    framework: {
+        getCurrentApp: () => 'system',
+        getCurrCtxtId: () => 'Applications',
+        sendEventToMmui(...args) { forwarded.push(args); }
+    }
+};
+vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../app/gauges.js'), 'utf8'), production);
+const productionNode = id => production.document.getElementById(id);
+assert.equal(productionNode('ndg-launcher'), undefined, 'no production floating launcher');
+assert.equal(productionNode('ndg-title').children.join(''), 'Gauges');
+timers.tick();
+timers[''](); // framework hook retry
+production.framework.sendEventToMmui('system', 'SelectNdGauges');
+assert.equal(productionNode('ndg-panel').style.display, 'block', 'OEM row opens Gauges');
+assert.equal(forwarded.length, 0, 'Gauges event stays client-side');
+productionNode('ndg-panel').onclick();
+timers.tick();
+assert.equal(productionNode('ndg-panel').style.display, 'none');
+production.framework.sendEventToMmui('system', 'SelectAndroidAuto');
+assert.deepEqual(forwarded, [['system', 'SelectAndroidAuto']], 'other OEM events unchanged');
+console.log('PASS: layout, alignment, missing data, pedal behavior, RPM cues and OEM-only Gauges launch');

@@ -309,7 +309,7 @@ existing `<script src="/emulator/ui-wayland.js"></script>` line:
 
 ```html
 <script>
-    window.GAUGES_DEV = true; // always show the launcher, skip framework checks
+    window.GAUGES_DEV = true; // standalone dev harness only; omit for OEM menu testing
 </script>
 <script src="/emulator/ndgauges.js"></script>
 ```
@@ -378,12 +378,10 @@ the overlay shows **OFFLINE** when the daemon is not running (data > 2 s old).
 
 ### Applications-list integration (OEM+ tile)
 
-By default the overlay is just a floating **GAUGES** button that appears
-while the Applications screen is open — functional, but obviously bolted on.
-To make it look like it shipped from the factory, the installer also adds a
-real **nd-gauges** row to the actual Applications list, styled identically to
-CarPlay, Android Auto, and Vehicle Status Monitor and selectable the same way
-(rotary knob or touch).
+Open **Gauges** from the Applications list, using the rotary knob or touch.
+The entry uses the same styling as CarPlay, Android Auto, and Vehicle Status
+Monitor. There is no floating launcher on the CMU or in mzd-emu. Only the
+standalone dev harness (`GAUGES_DEV = true`) provides a floating launcher.
 
 This works because the real Applications list isn't an extensible
 plugin registry — it's a fixed array hardcoded in `systemApp.js`
@@ -407,7 +405,8 @@ through unmodified.
   stay balanced in both files) before declaring success. If validation fails,
   it immediately restores both files from the backup rather than leaving a
   possibly-broken systemApp.js in place.
-- Is idempotent: running the installer again when already patched is a no-op.
+- Is idempotent: repeated installation preserves the original backups and
+  upgrades an older `nd-gauges` menu label to **Gauges**.
 - Uninstall restores both files from the `*.nd-gauges-orig` backups exactly.
 
 This was built and verified against the real, unmodified firmware GUI code
@@ -420,10 +419,8 @@ and opens the gauges panel on select.
 existing stock file rather than only adding new ones (see Safety below). A
 firmware update will overwrite `systemApp.js` back to stock, silently
 dropping the patch (and the backup, since it gets overwritten too) —
-re-running the installer reapplies it. If you'd rather keep the zero-stock-
-file-modification guarantee, delete the `patch_applications_list` /
-`restore_applications_list` calls from `install-gauges.sh`; the floating
-button keeps working either way, since it doesn't depend on this patch at all.
+re-running the installer reapplies it. Without this patch, there is no
+production launcher for Gauges.
 
 ## Calibration
 

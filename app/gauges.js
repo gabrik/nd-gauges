@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name        nd-gauges
+// @name        Gauges
 // @description Custom gauges overlay for Mazda Connect (MX-5 ND)
 // @version     0.1.0
 // ==/UserScript==
@@ -53,7 +53,7 @@
 		intakeMin: -40, intakeMax: 80, intakeMid: 20,
 		intakeLabelLo: -20, intakeLabelHi: 60,
 		intakeCold: 0, intakeHot: 45,
-		alwaysShow: !!window.GAUGES_DEV   // dev harness: skip framework checks
+		alwaysShow: !!window.GAUGES_DEV   // standalone dev harness launcher only
 	};
 
 	var state = {
@@ -66,18 +66,6 @@
 		lastOk: 0
 	};
 
-	// ------------------------------------------------------------ framework
-	function inApplicationsScreen() {
-		if (CFG.alwaysShow) { return true; }
-		try {
-			return typeof framework === 'object' &&
-				framework.getCurrentApp() === 'system' &&
-				framework.getCurrCtxtId() === 'Applications';
-		} catch (e) {
-			return false;
-		}
-	}
-
 	// ---------------------------------------------------------------- DOM
 	function injectCss() {
 		var l = document.createElement('link');
@@ -88,10 +76,14 @@
 	}
 
 	function buildDom() {
-		var launcher = document.createElement('div');
-		launcher.id = 'ndg-launcher';
-		launcher.appendChild(document.createTextNode('GAUGES'));
-		document.body.appendChild(launcher);
+		var launcher = null;
+		if (CFG.alwaysShow) {
+			launcher = document.createElement('div');
+			launcher.id = 'ndg-launcher';
+			launcher.appendChild(document.createTextNode('Gauges'));
+			launcher.onclick = function () { openPanel(); };
+			document.body.appendChild(launcher);
+		}
 
 		var panel = document.createElement('div');
 		panel.id = 'ndg-panel';
@@ -107,7 +99,7 @@
 		back.appendChild(document.createTextNode('\u2039'));
 		var title = document.createElement('span');
 		title.id = 'ndg-title';
-		title.appendChild(document.createTextNode('nd-gauges'));
+		title.appendChild(document.createTextNode('Gauges'));
 		header.appendChild(back);
 		header.appendChild(title);
 		panel.appendChild(header);
@@ -123,7 +115,6 @@
 
 		document.body.appendChild(panel);
 
-		launcher.onclick = function () { openPanel(); };
 		panel.onclick = function () {
 			state.open = false;
 			panel.style.display = 'none';
@@ -144,21 +135,20 @@
 	function openPanel() {
 		state.open = true;
 		state.panel.style.display = 'block';
-		state.launcher.style.display = 'none';
+		if (state.launcher) { state.launcher.style.display = 'none'; }
 		resize();
 	}
 
 	// ------------------------------------------------------- Applications tile
-	// If install-gauges.sh has patched systemApp.js to add an 'nd-gauges' row
+	// If install-gauges.sh has patched systemApp.js to add a 'Gauges' row
 	// to the real Applications list (appName:'ndgauges', mmuiEvent:'SelectNdGauges'),
 	// hook it here so selecting that row opens the panel directly instead of
 	// going to the native MMUI backend, which has no idea what 'SelectNdGauges'
 	// means. framework.sendEventToMmui is looked up fresh on every call by
 	// systemApp.js's _menuItemSelectCallback, so patching it works regardless
 	// of load order — no race with when systemApp's own listeners got bound.
-	// Falls back cleanly (does nothing) if the patch was never applied, e.g. a
-	// firmware update overwrote systemApp.js and install-gauges.sh hasn't
-	// re-run yet — the Applications-screen launcher button still works then.
+	// After a firmware update that removes the menu patch, rerun the installer
+	// to restore the entry. There is no floating launcher in the production UI.
 	function installMmuiHook() {
 		if (typeof framework !== 'object' || typeof framework.sendEventToMmui !== 'function') {
 			return false;
@@ -634,8 +624,8 @@
 	function tick() {
 		if (state.open) {
 			draw();
-		} else {
-			state.launcher.style.display = inApplicationsScreen() ? 'block' : 'none';
+		} else if (state.launcher) {
+			state.launcher.style.display = 'block';
 		}
 	}
 

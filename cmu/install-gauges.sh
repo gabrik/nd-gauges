@@ -20,9 +20,9 @@ USERJS="/jci/opera/opera_dir/userjs/ndgauges.js"
 SCRIPTS_DIR="/jci/scripts"
 STATE_DIR="/tmp/nd-gauges"
 
-# Applications-list integration (OEM+ tile instead of just the floating
-# GAUGES button). This is the ONE stock file nd-gauges patches — everything
-# else only adds new files. Backed up before editing and restored on
+# Applications-list integration (the only production launcher). The stock
+# systemApp.js and its English dictionary are backed up before editing; all
+# other installed assets are new files. Both stock files are restored on
 # uninstall. See README "Applications-list integration" for why this is
 # needed and what the risk tradeoff is.
 SYSTEM_APP_JS="/jci/gui/apps/system/js/systemApp.js"
@@ -34,7 +34,7 @@ log() { printf '%s [nd-gauges] %s\n' "$(date '+%H:%M:%S' 2>/dev/null || echo '?'
 popup() { # text
 	[ -x /jci/tools/jci-dialog ] || return 0
 	killall -q jci-dialog 2>/dev/null || true
-	/jci/tools/jci-dialog --info --title="nd-gauges" --text="$1" --no-cancel \
+	/jci/tools/jci-dialog --info --title="Gauges" --text="$1" --no-cancel \
 		>/dev/null 2>&1 &
 }
 
@@ -60,7 +60,7 @@ go_rw() {
 }
 
 # ---------------------------------------------------- Applications-list patch
-# Adds one row ('nd-gauges') to the real Applications list by editing
+# Adds one row ('Gauges') to the real Applications list by editing
 # systemApp.js's _initApplicationsDataList (plain, uncompiled JS, not a
 # compiled .so) and registering the appName in _applicationsCtxtWiseAppNames.
 # Selecting the row is intercepted entirely client-side in gauges.js (it
@@ -75,11 +75,15 @@ brace_balance_ok() { # file -> true if "{" count == "}" count (coarse JS sanity 
 
 patch_applications_list() {
 	if ! [ -f "$SYSTEM_APP_JS" ] || ! [ -f "$SYSTEM_APP_DICT" ]; then
-		log "WARNING: $SYSTEM_APP_JS or dict not found; skipping Applications-list tile (floating GAUGES button still works)"
+		log "WARNING: $SYSTEM_APP_JS or dict not found; Gauges cannot be launched until the Applications-list patch succeeds"
 		return 1
 	fi
 	if grep -q "'ndgauges'" "$SYSTEM_APP_JS" 2>/dev/null; then
-		log "systemApp.js already patched for nd-gauges"
+		# Upgrade the old display name without replacing the original backup.
+		[ -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX" ] || cp -a "$SYSTEM_APP_DICT" "$SYSTEM_APP_DICT$BACKUP_SUFFIX" || return 1
+		sed -i 's/"NdGauges"[[:space:]]*:[[:space:]]*"nd-gauges"/"NdGauges" : "Gauges"/' "$SYSTEM_APP_DICT" || return 1
+		grep -q '"NdGauges"[[:space:]]*:[[:space:]]*"Gauges"' "$SYSTEM_APP_DICT" || return 1
+		log "Applications-list entry already present; display name is Gauges"
 		return 0
 	fi
 
@@ -93,7 +97,7 @@ patch_applications_list() {
         { appData : { appName : 'ndgauges', isVisible : true, audioSourceId : 'None', mmuiEvent : 'SelectNdGauges' }, text1Id : 'NdGauges', disabled : false, itemStyle : 'style01', hasCaret : false }
 EOF
 	cat > "$_dict_file" << 'EOF'
-	"NdGauges" : "nd-gauges",
+	"NdGauges" : "Gauges",
 EOF
 
 	# 1) add our item to _initApplicationsDataList's items array (anchor is the
@@ -119,7 +123,7 @@ EOF
 		&& grep -q 'NdGauges' "$SYSTEM_APP_DICT" \
 		&& brace_balance_ok "$SYSTEM_APP_JS" && brace_balance_ok "$SYSTEM_APP_DICT"
 	then
-		log "Applications-list patch applied (nd-gauges tile)"
+		log "Applications-list patch applied (Gauges tile)"
 		return 0
 	fi
 
@@ -142,7 +146,7 @@ restore_applications_list() {
 
 # ------------------------------------------------------------------ uninstall
 if [ -f "$REPO_DIR/UNINSTALL" ]; then
-	popup "Removing nd-gauges..."
+	popup "Removing Gauges..."
 	go_rw
 	restore_applications_list
 	rm -f "$USERJS"
@@ -153,7 +157,7 @@ if [ -f "$REPO_DIR/UNINSTALL" ]; then
 		[ -f "$f" ] && sed -i '/# nd-gauges autostart/,+1d' "$f" 2>/dev/null
 	done
 	log "uninstalled"
-	popup "nd-gauges removed. Remove the USB stick."
+	popup "Gauges removed. Remove the USB stick."
 	exit 0
 fi
 
@@ -173,7 +177,7 @@ else
 	log "WARNING: could not detect firmware version — continuing anyway"
 fi
 
-popup "Installing nd-gauges..."
+popup "Installing Gauges..."
 
 # -------------------------------------------------------------------- install
 go_rw
@@ -202,12 +206,16 @@ for f in /etc/rc.d/rc.local /jci/scripts/autorun.sh; do
 done
 [ "$HOOKED" = 0 ] && log "NOTE: no known autostart hook found; daemon started for this boot only (use gauges-ctl.sh start over SSH)"
 
-patch_applications_list
+patch_applications_list || {
+	log "ERROR: installation incomplete — Applications-list entry unavailable"
+	popup "Gauges installation incomplete: Applications entry could not be installed. Check nd-gauges.log."
+	exit 1
+}
 
 log "files installed; starting daemon"
 sh "$SCRIPTS_DIR/gauges-ctl.sh" start >> "$LOG" 2>&1 \
 	&& log "daemon running" || log "WARNING: daemon did not start (check $LOG)"
 
-popup "nd-gauges installed. Open Applications and select nd-gauges. Remove the USB stick."
+popup "Gauges installed. Open Applications and select Gauges. Remove the USB stick."
 log "install complete"
 exit 0
