@@ -1,0 +1,17 @@
+{
+  "speed_kmh": 120,
+  "odometer_km": 42816,
+  "trip_km": 126.4,
+  "rpm": 3200,
+  "gear": 4,
+  "brake": 0,
+  "throttle_pct": 45,
+  "clutch_pct": 35,
+  "lat_g": 0.3,
+  "long_g": 0.1,
+  "steer_deg": -8,
+  "coolant_c": 91,
+  "oil_c": 105,
+  "intake_air_c": 34,
+  "fuel_level_pct": 62
+}

@@ -178,7 +178,10 @@ while :; do
 		json_field oil_c "$oil"; printf ','
 		# Reserved until live CMU/OBD sources are confirmed on the car.
 		json_field intake_air_c null; printf ','
-		json_field fuel_level_pct null
+		json_field fuel_level_pct null; printf ','
+		json_field odometer_km null; printf ','
+		json_field trip_km null; printf ','
+		json_field clutch_pct null
 		printf '}\n'
 	} > "$TMP_OUT" 2>/dev/null && mv "$TMP_OUT" "$GAUGES_OUT" 2>/dev/null
 

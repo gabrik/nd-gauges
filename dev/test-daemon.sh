@@ -37,9 +37,11 @@ import json, sys, time
 d = json.load(open(sys.argv[1]))
 keys = ["ts", "speed_kmh", "gear", "brake", "rpm", "throttle_pct",
         "steer_deg", "lat_g", "long_g", "coolant_c", "oil_c",
-        "intake_air_c", "fuel_level_pct"]
+        "intake_air_c", "fuel_level_pct", "odometer_km", "trip_km", "clutch_pct"]
 missing = [k for k in keys if k not in d]
 assert not missing, "missing keys: %s" % missing
+assert d["odometer_km"] is None and d["trip_km"] is None, "unwired distances must remain null"
+assert d["clutch_pct"] is None, "unwired clutch must remain null"
 assert time.time() - d["ts"] < 5, "stale ts"
 print("OK: all keys present, ts fresh")
 print(json.dumps(d, indent=1))

@@ -34,6 +34,8 @@
 		cssUrl: window.GAUGES_CSS_URL || 'gauges/gauges.css',
 		pollMs: 200,
 		staleMs: 2000,
+		rpmScaleMax: 8000, rpmWarning: 6000, rpmRedline: 7000,
+		rpmFlashAt: 7300, rpmFlashPeriodMs: 500,
 		// Coolant/oil thresholds in °C. Coolant is a real sensor driving the
 		// stock analog gauge; oil is shown IF your daemon provides it, but
 		// SkyActiv engines have no physical oil temp sensor — see README
@@ -219,17 +221,18 @@
 	// label. `invert` mirrors the lower pair so the four arcs face inward.
 	function drawArcGauge(ctx, F, gauge) {
 		var cx = gauge.cx, cy = gauge.cy, r = gauge.r;
+		var bandDepth = 30;
 		var value = gauge.value, min = gauge.min, max = gauge.max, mid = gauge.mid;
 		var labelLo = gauge.labelLo, labelHi = gauge.labelHi;
 		var cold = gauge.cold, hot = gauge.hot, invert = gauge.invert, icon = gauge.icon;
 		var options = gauge.options || {};
 		var lowCapColor = options.lowCapColor || '#3a82ff';
 		var highCapColor = options.highCapColor || COLOR.accent;
-		var topStartA = Math.PI * 1.1, topEndA = Math.PI * 1.9;
-		var sweep = topEndA - topStartA;
-		var baseA = invert ? Math.PI * 0.9 : topStartA;
+		// A short sweep of a large circle, not a non-uniformly scaled dial.
+		// Its center is offscreen; type and icon sizes are independent of r.
+		var sweep = gauge.sweep;
+		var baseA = invert ? Math.PI / 2 + sweep / 2 : -Math.PI / 2 - sweep / 2;
 		var dir = invert ? -1 : 1;
-		var ccw = !!invert;
 
 		function angleAt(frac) { return baseA + dir * sweep * frac; }
 
@@ -243,7 +246,7 @@
 		function arcSeg(f0, f1, color, width) {
 			var a0 = angleAt(f0), a1 = angleAt(f1);
 			ctx.beginPath();
-			ctx.arc(cx, cy, r, a0, a1, ccw);
+			ctx.arc(cx, cy, r, a0, a1, !!invert);
 			ctx.strokeStyle = color;
 			ctx.lineWidth = width;
 			ctx.lineCap = 'butt';
@@ -298,9 +301,10 @@
 		// Their positions are fixed and independent of the live reading.
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
-		ctx.font = '600 ' + Math.round(r * 0.1) + 'px ' + F;
+		ctx.font = '600 11px ' + F;
 		ctx.fillStyle = COLOR.dim;
-		var labelR = r - 16;
+		// Center the printed scale in the band between progress and inner arcs.
+		var labelR = r - bandDepth / 2;
 		[labelLo, mid, labelHi].forEach(function (lv) {
 			var la = angleAt(valueToFrac(lv));
 			ctx.fillText(String(lv), cx + Math.cos(la) * labelR, cy + Math.sin(la) * labelR);
@@ -324,22 +328,37 @@
 		// small plain inner arc, same shape as the main track but smaller and
 		// undecorated -- the reference has exactly this second, thinner arc
 		// framing the icon underneath the scale.
-		var innerR = r * 0.7;
 		ctx.beginPath();
-		ctx.arc(cx, cy, innerR, angleAt(0), angleAt(1), ccw);
+		ctx.arc(cx, cy, r - bandDepth, angleAt(0), angleAt(1), !!invert);
 		ctx.strokeStyle = COLOR.dim;
 		ctx.lineWidth = 1;
 		ctx.stroke();
 
-		// Value sits closest to the scale/inner arc, icon sits further out.
-		// The bottom pair is vertically mirrored from the top pair.
-		var textSign = invert ? -1 : 1;
-		ctx.font = '600 ' + Math.round(r * 0.2) + 'px ' + F;
+		// Keep the value row well clear of the inner arc. Icons sit alongside
+		// the numbers so generous clearance does not increase the band height.
+		ctx.font = '600 22px ' + F;
 		ctx.fillStyle = hasValue ?
 			(options.colorMode === 'fuel' ? fuelColor(vClamped) : tempColor(vClamped, cold, hot)) : COLOR.dim;
-		ctx.fillText((hasValue ? num(vClamped, 0) + (options.suffix || DEG) : '--'),
-			cx, cy + textSign * r * -0.50);
-		if (icon) { drawVectorIcon(ctx, icon, cx, cy + textSign * r * -0.25, r * 0.20); }
+		var reading = hasValue ? num(vClamped, 0) + (options.suffix || DEG) : '--';
+		drawGaugeReadout(ctx, icon, reading, cx, gauge.valueY);
+	}
+
+	function drawGaugeReadout(ctx, icon, reading, cx, cy) {
+		ctx.save();
+		ctx.textAlign = 'left';
+		ctx.textBaseline = 'alphabetic';
+		var metrics = ctx.measureText(reading);
+		// Older CMU canvases expose width only. Tipperary's 22px numeric
+		// glyphs have approximately 16px ascent and no alphabetic descender.
+		var left = metrics.actualBoundingBoxLeft || 0;
+		var right = metrics.actualBoundingBoxRight == null ? metrics.width : metrics.actualBoundingBoxRight;
+		var ascent = metrics.actualBoundingBoxAscent == null ? 16 : metrics.actualBoundingBoxAscent;
+		var descent = metrics.actualBoundingBoxDescent || 0;
+		var iconSize = icon ? 22.4 : 0, gap = icon ? 10 : 0;
+		var rowLeft = cx - (iconSize + gap + left + right) / 2;
+		ctx.fillText(reading, rowLeft + iconSize + gap + left, cy + (ascent - descent) / 2);
+		if (icon) { drawVectorIcon(ctx, icon, rowLeft + iconSize / 2, cy, iconSize); }
+		ctx.restore();
 	}
 
 	// Real automotive icons -- Material Design Icons' "coolant-temperature"
@@ -356,12 +375,20 @@
 	ICON_PATH.air = new Path2D('M19,18.31V20A2,2 0 0,1 17,22H7A2,2 0 0,1 5,20V16.3C4.54,16.12 3.95,16 3,16A1,1 0 0,1 2,15A1,1 0 0,1 3,14C3.82,14 4.47,14.08 5,14.21V12.3C4.54,12.12 3.95,12 3,12A1,1 0 0,1 2,11A1,1 0 0,1 3,10C3.82,10 4.47,10.08 5,10.21V8.3C4.54,8.12 3.95,8 3,8A1,1 0 0,1 2,7A1,1 0 0,1 3,6C3.82,6 4.47,6.08 5,6.21V4A2,2 0 0,1 7,2H17A2,2 0 0,1 19,4V6.16C20.78,6.47 21.54,7.13 21.71,7.29C22.1,7.68 22.1,8.32 21.71,8.71C21.32,9.1 20.8,9.09 20.29,8.71V8.71C20.29,8.71 19.25,8 17,8C15.74,8 14.91,8.41 13.95,8.9C12.91,9.41 11.74,10 10,10C9.64,10 9.31,10 9,9.96V7.95C9.3,8 9.63,8 10,8C11.26,8 12.09,7.59 13.05,7.11C14.09,6.59 15.27,6 17,6V4H7V20H17V18C18.5,18 18.97,18.29 19,18.31M17,10C15.27,10 14.09,10.59 13.05,11.11C12.09,11.59 11.26,12 10,12C9.63,12 9.3,12 9,11.95V13.96C9.31,14 9.64,14 10,14C11.74,14 12.91,13.41 13.95,12.9C14.91,12.42 15.74,12 17,12C19.25,12 20.29,12.71 20.29,12.71V12.71C20.8,13.1 21.32,13.1 21.71,12.71C22.1,12.32 22.1,11.69 21.71,11.29C21.5,11.08 20.25,10 17,10M17,14C15.27,14 14.09,14.59 13.05,15.11C12.09,15.59 11.26,16 10,16C9.63,16 9.3,16 9,15.95V17.96C9.31,18 9.64,18 10,18C11.74,18 12.91,17.41 13.95,16.9C14.91,16.42 15.74,16 17,16C19.25,16 20.29,16.71 20.29,16.71V16.71C20.8,17.1 21.32,17.1 21.71,16.71C22.1,16.32 22.1,15.69 21.71,15.29C21.5,15.08 20.25,14 17,14Z');
 	ICON_PATH.fuel = new Path2D('M18,10A1,1 0 0,1 17,9A1,1 0 0,1 18,8A1,1 0 0,1 19,9A1,1 0 0,1 18,10M12,10H6V5H12M19.77,7.23L19.78,7.22L16.06,3.5L15,4.56L17.11,6.67C16.17,7 15.5,7.93 15.5,9A2.5,2.5 0 0,0 18,11.5C18.36,11.5 18.69,11.42 19,11.29V18.5A1,1 0 0,1 18,19.5A1,1 0 0,1 17,18.5V14C17,12.89 16.1,12 15,12H14V5C14,3.89 13.1,3 12,3H6C4.89,3 4,3.89 4,5V21H14V13.5H15.5V18.5A2.5,2.5 0 0,0 18,21A2.5,2.5 0 0,0 20.5,18.5V9C20.5,8.31 20.22,7.68 19.77,7.23Z');
 	ICON_PATH.fuelArrow = new Path2D('M4.5,8.5L0,12L4.5,15.5Z');
+	// Visible path bounds, including the fuel pump's left-side marker.
+	var ICON_BOUNDS = {
+		coolant: [0, 1, 24, 23], oil: [0.1, 1, 23.9, 22],
+		air: [2, 2, 20, 20], fuel: [0, 3, 22, 18]
+	};
 	function drawVectorIcon(ctx, key, cx, cy, size) {
 		var path = ICON_PATH[key];
 		if (!path) { return; }
+		var bounds = ICON_BOUNDS[key];
+		var scale = size / bounds[2];
 		ctx.save();
-		ctx.translate(cx - size / 2, cy - size / 2);
-		ctx.scale(size / 24, size / 24);
+		ctx.translate(cx - (bounds[0] + bounds[2] / 2) * scale,
+			cy - (bounds[1] + bounds[3] / 2) * scale);
+		ctx.scale(scale, scale);
 		ctx.fillStyle = COLOR.dim;
 		if (key === 'fuel') {
 			ctx.fill(ICON_PATH.fuelArrow);
@@ -371,8 +398,7 @@
 		ctx.restore();
 	}
 
-	// Vehicle readout card: translucent rounded box, big value and label.
-	function drawCornerCard(ctx, F, x, y, w, h, value, label, color) {
+	function drawCardBackground(ctx, x, y, w, h) {
 		var r = 10;
 		ctx.beginPath();
 		ctx.moveTo(x + r, y);
@@ -383,7 +409,11 @@
 		ctx.closePath();
 		ctx.fillStyle = 'rgba(20,20,20,0.7)';
 		ctx.fill();
+	}
 
+	// Vehicle readout card: translucent rounded box, big value and label.
+	function drawCornerCard(ctx, F, x, y, w, h, value, label, color) {
+		drawCardBackground(ctx, x, y, w, h);
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'middle';
 		ctx.font = 'bold ' + Math.round(h * 0.42) + 'px ' + F;
@@ -392,6 +422,137 @@
 		ctx.font = '600 ' + Math.round(h * 0.2) + 'px ' + F;
 		ctx.fillStyle = COLOR.dim;
 		ctx.fillText(label, x + w / 2, y + h * 0.78);
+	}
+
+	function isShiftWarning(rpm) {
+		return typeof rpm === 'number' && isFinite(rpm) && rpm >= CFG.rpmFlashAt;
+	}
+
+	// Segmented rev strip from the mockup; never reuse its static lit pattern.
+	function drawRpmStrip(ctx, F, rpm) {
+		var available = typeof rpm === 'number' && isFinite(rpm);
+		var count = 18;
+		var lit = available ? Math.ceil(Math.max(0, Math.min(CFG.rpmScaleMax, rpm)) / CFG.rpmScaleMax * count) : 0;
+		var color = rpm > CFG.rpmRedline ? COLOR.accent :
+			(rpm >= CFG.rpmWarning ? COLOR.warn : COLOR.fg);
+		// Blink the filled portion at 2Hz near the limiter; no extra timers.
+		var visible = !isShiftWarning(rpm) ||
+			(new Date().getTime() % CFG.rpmFlashPeriodMs) < CFG.rpmFlashPeriodMs / 2;
+		for (var i = 0; i < count; i++) {
+			ctx.fillStyle = '#242a31';
+			if (i < lit && visible) { ctx.fillStyle = color; }
+			ctx.fillRect(38 + i * 41.5, 92, 33, 10);
+		}
+		if (!available) {
+			ctx.textAlign = 'center';
+			ctx.font = '600 12px ' + F;
+			ctx.fillStyle = COLOR.dim;
+			ctx.fillText('RPM --', 406.5, 110);
+		}
+	}
+
+	function drawSpeedReadout(ctx, F, data) {
+		drawCardBackground(ctx, 27, 135, 249, 174);
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.font = '600 72px ' + F;
+		ctx.fillStyle = COLOR.fg;
+		ctx.fillText(num(data.speed_kmh, 0), 151.5, 185);
+		ctx.font = '600 22px ' + F;
+		ctx.fillStyle = COLOR.dim;
+		ctx.fillText('km/h', 151.5, 228);
+
+		// Distances must be supplied by a confirmed source, never inferred
+		// from the mockup or accumulated from unreliable speed samples.
+		[
+			{ label: 'ODO', value: data.odometer_km, digits: 0, y: 263 },
+			{ label: 'TRIP', value: data.trip_km, digits: 1, y: 287 }
+		].forEach(function (row) {
+			var available = typeof row.value === 'number' && isFinite(row.value) && row.value >= 0;
+			ctx.textAlign = 'left';
+			ctx.font = '600 12px ' + F;
+			ctx.fillStyle = COLOR.dim;
+			ctx.fillText(row.label, 45, row.y);
+			ctx.textAlign = 'right';
+			ctx.font = '600 16px ' + F;
+			ctx.fillStyle = available ? COLOR.fg : COLOR.dim;
+			ctx.fillText(available ? num(row.value, row.digits) + ' km' : '--', 258, row.y);
+		});
+	}
+
+	function drawPedalBar(ctx, F, x, value, label, color) {
+		var available = typeof value === 'number' && isFinite(value);
+		var fraction = available ? Math.max(0, Math.min(100, value)) / 100 : 0;
+		var width = 22;
+		ctx.fillStyle = '#353535';
+		ctx.fillRect(x, 141, width, 156);
+		ctx.fillStyle = color;
+		ctx.fillRect(x, 141 + 156 * (1 - fraction), width, 156 * fraction);
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.font = '600 12px ' + F;
+		ctx.fillStyle = COLOR.fg;
+		ctx.fillText(label + (available ? '' : ' --'), x + width / 2, 309);
+	}
+
+	// Vector fallback for the private image in the design; rotate real data.
+	function drawSteeringReadout(ctx, F, angle) {
+		ctx.save();
+		ctx.translate(348.5, 254.5);
+		ctx.rotate((angle || 0) * Math.PI / 180);
+		ctx.strokeStyle = COLOR.dim;
+		ctx.lineWidth = 2.5;
+		ctx.beginPath();
+		ctx.arc(0, 0, 29, 0, Math.PI * 2);
+		ctx.moveTo(-4, -1); ctx.lineTo(-28, -6);
+		ctx.moveTo(4, -1); ctx.lineTo(28, -6);
+		ctx.moveTo(0, 4); ctx.lineTo(0, 29);
+		ctx.moveTo(4, 0);
+		ctx.arc(0, 0, 4, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.restore();
+		ctx.font = '600 14px ' + F;
+		ctx.fillStyle = COLOR.dim;
+		ctx.fillText(num(angle, 0) + DEG, 348.5, 301);
+	}
+
+	// Compact 1g plot with live directional components, not peak/max values.
+	// Clamp only the dot, never the numeric magnitude.
+	function drawGForceReadout(ctx, F, lat, lon) {
+		var available = typeof lat === 'number' && isFinite(lat) &&
+			typeof lon === 'number' && isFinite(lon);
+		var cx = 685.5, cy = 214, r = 48;
+		ctx.strokeStyle = COLOR.dim;
+		ctx.lineWidth = 1;
+		ctx.beginPath();
+		ctx.arc(cx, cy, r, 0, Math.PI * 2);
+		ctx.stroke();
+		ctx.strokeStyle = '#555';
+		ctx.beginPath();
+		for (var i = -2; i <= 2; i++) {
+			ctx.moveTo(cx - 2, cy + i * 10); ctx.lineTo(cx + 2, cy + i * 10);
+			ctx.moveTo(cx + i * 10, cy - 2); ctx.lineTo(cx + i * 10, cy + 2);
+		}
+		ctx.stroke();
+		ctx.fillStyle = COLOR.dim;
+		ctx.font = '600 13px ' + F;
+		ctx.fillText('G-FORCE', cx, cy - r - 16);
+		ctx.font = '600 10px ' + F;
+		ctx.fillText(available ? num(Math.max(0, lon), 2) : '--', cx, cy - 33);
+		ctx.fillText(available ? num(Math.max(0, -lon), 2) : '--', cx, cy + 33);
+		ctx.fillText(available ? num(Math.max(0, -lat), 2) : '--', cx - 33, cy);
+		ctx.fillText(available ? num(Math.max(0, lat), 2) : '--', cx + 33, cy);
+		if (available) {
+			ctx.beginPath();
+			var magnitude = Math.sqrt(lat * lat + lon * lon);
+			var scale = (r - 4) / Math.max(1, magnitude);
+			ctx.arc(cx + lat * scale, cy - lon * scale, 4, 0, Math.PI * 2);
+			ctx.fillStyle = COLOR.accent;
+			ctx.fill();
+		}
+		ctx.font = '600 20px ' + F;
+		ctx.fillStyle = COLOR.fg;
+		ctx.fillText(available ? num(Math.sqrt(lat * lat + lon * lon), 2) + ' g' : '--', cx, cy + r + 19);
 	}
 
 	function draw() {
@@ -417,29 +578,33 @@
 
 		// Fixed geometry for the CMU's 800x480 screen (416px canvas below
 		// the 64px header); this isn't intended to be a responsive layout.
-		var cardW = 128, cardH = 75;
-		var arcR = 112, arcColX = 132, arcRightX = 668;
-		var arcTopCy = 137, arcBotCy = 279;
+		var arcR = 640, arcSweep = 30 * Math.PI / 180;
+		var arcColX = 201.25, arcRightX = 605.75;
+		var arcTopCy = arcR + 13, arcBotCy = 390 - arcR;
 		drawArcGauge(ctx, F, {
-			cx: arcColX, cy: arcTopCy, r: arcR, value: d.coolant_c,
+			cx: arcColX, cy: arcTopCy, r: arcR, sweep: arcSweep,
+			valueY: 60, value: d.coolant_c,
 			min: CFG.gaugeMin, max: CFG.gaugeMax, mid: CFG.gaugeMid,
 			labelLo: CFG.gaugeLabelLo, labelHi: CFG.gaugeLabelHi,
 			cold: CFG.coolantCold, hot: CFG.coolantHot, invert: false, icon: 'coolant'
 		});
 		drawArcGauge(ctx, F, {
-			cx: arcColX, cy: arcBotCy, r: arcR, value: d.oil_c,
+			cx: arcColX + 5, cy: arcBotCy, r: arcR, sweep: arcSweep,
+			valueY: 343, value: d.oil_c,
 			min: CFG.gaugeMin, max: CFG.gaugeMax, mid: CFG.gaugeMid,
 			labelLo: CFG.gaugeLabelLo, labelHi: CFG.gaugeLabelHi,
 			cold: CFG.oilCold, hot: CFG.oilHot, invert: true, icon: 'oil'
 		});
 		drawArcGauge(ctx, F, {
-			cx: arcRightX, cy: arcTopCy, r: arcR, value: d.intake_air_c,
+			cx: arcRightX, cy: arcTopCy, r: arcR, sweep: arcSweep,
+			valueY: 60, value: d.intake_air_c,
 			min: CFG.intakeMin, max: CFG.intakeMax, mid: CFG.intakeMid,
 			labelLo: CFG.intakeLabelLo, labelHi: CFG.intakeLabelHi,
 			cold: CFG.intakeCold, hot: CFG.intakeHot, invert: false, icon: 'air'
 		});
 		drawArcGauge(ctx, F, {
-			cx: arcRightX, cy: arcBotCy, r: arcR, value: d.fuel_level_pct,
+			cx: arcRightX, cy: arcBotCy, r: arcR, sweep: arcSweep,
+			valueY: 343, value: d.fuel_level_pct,
 			min: 0, max: 100, mid: 50, labelLo: 0, labelHi: 100,
 			cold: 0, hot: 100, invert: true, icon: 'fuel',
 			options: {
@@ -448,31 +613,21 @@
 			}
 		});
 
-		// Preserve the smaller vehicle readouts in the open center channel.
-		var cardGap = 12;
-		var cardY = 170;
-		var gearX = 266;
-		var gforceX = gearX + cardW + cardGap;
-		drawCornerCard(ctx, F, gearX, cardY, cardW, cardH,
-			gearTxt, 'GEAR', COLOR.accent);
-
-		var lat = d.lat_g || 0, lon = d.long_g || 0;
-		var gmag = Math.sqrt(lat * lat + lon * lon);
-		drawCornerCard(ctx, F, gforceX, cardY, cardW, cardH,
-			num(gmag, 2) + ' g', 'G-FORCE', COLOR.fg);
-		var statusY = cardY + cardH + 25;
-		ctx.textAlign = 'center';
-		ctx.textBaseline = 'middle';
-		ctx.font = '600 ' + Math.round(cardH * 0.2) + 'px ' + F;
+		// Penpot's board starts at (438,35); coordinates here omit its header.
 		ctx.fillStyle = COLOR.dim;
-		ctx.fillText('steer ' + num(d.steer_deg, 0) + DEG + ' / thr ' + num(d.throttle_pct, 0) + '%',
-			412, statusY);
-
-		// Brake lamp sits beside the steering/throttle line.
-		ctx.beginPath();
-		ctx.arc(300, statusY, 7, 0, Math.PI * 2);
-		ctx.fillStyle = d.brake ? COLOR.accent : '#2a2a2a';
-		ctx.fill();
+		ctx.fillRect(31, 82, 750, 1);
+		ctx.fillRect(31, 319, 750, 1);
+		drawRpmStrip(ctx, F, d.rpm);
+		drawSpeedReadout(ctx, F, d);
+		drawCornerCard(ctx, F, 284, 138, 128, 75, gearTxt, 'GEAR',
+			isShiftWarning(d.rpm) ? COLOR.accent : COLOR.fg);
+		drawSteeringReadout(ctx, F, d.steer_deg);
+		// Physical pedal order; clutch percentage stays unavailable unless supplied.
+		drawPedalBar(ctx, F, 429, d.clutch_pct, 'Clutch', '#3a82ff');
+		// D-Bus exposes a brake switch, not an analog pedal percentage.
+		drawPedalBar(ctx, F, 479, d.brake == null ? null : (d.brake ? 100 : 0), 'Brake', COLOR.accent);
+		drawPedalBar(ctx, F, 529, d.throttle_pct, 'Thr', '#078400');
+		drawGForceReadout(ctx, F, d.lat_g, d.long_g);
 	}
 
 	// ---------------------------------------------------------------- main
