@@ -37,6 +37,8 @@ CAN bus ──> JCI daemons ──> dbus (unix:/tmp/dbus_service_socket)
 | Longitudinal accel | `com.jci.vbs.vdt` | `VehLong_A_Actl` signal | int16 (0.001 g units) |
 | Coolant temp | `com.jci.vbs.vdt` | `EngClnt_Te_Actl` signal — **unconfirmed member name** | int16, °C (guessed, see below) |
 | Oil temp | — | **not wired by default** — see below | n/a |
+| Intake air temp | — | Unwired (`intake_air_c` stays null); standard OBD-II Mode 01 PID `0x0F` is a candidate | n/a |
+| Fuel level | — | Unwired (`fuel_level_pct` stays null); standard OBD-II Mode 01 PID `0x2F` is a candidate | n/a |
 
 > ⚠️ **Coolant temp signal name is a guess, not a confirmation.** It definitely
 > exists on the vehicle bus (it drives the stock analog coolant gauge), but
@@ -58,6 +60,12 @@ CAN bus ──> JCI daemons ──> dbus (unix:/tmp/dbus_service_socket)
 > (`GAUGES_OIL_MEMBER` empty — the overlay just shows `--`). Set it if you
 > find a real member via `dbus-monitor`.
 
+> **Intake air and fuel level are display-only placeholders for now.** The
+> extracted CMU data schema contains `DR_IntakeAirTemp` and `FuelGaugePosition`,
+> but neither is a documented live signal in the public `com.jci.vbs.vdt` API.
+> The overlay displays values if supplied; the daemon writes `null` until a
+> live CMU signal or an OBD query path is confirmed on the car.
+>
 > ⚠️ Scaling factors (0.1 %, 0.1 deg, 0.001 g) are educated guesses from signal
 > naming conventions. Calibrate against real data on first run — see
 > "Calibration" below.
@@ -463,40 +471,23 @@ the real firmware, not guessed:
 
 ### Real analog gauges, not just digits
 
-The main display is drawn as actual instrument-cluster gauges — circular
-dials with tick marks, a redline arc, and a sweeping needle — matching the
-real ND cluster's layout, confirmed against Mazda's own owner's manual pages
-and ND-specific gauge-face references:
+The current display uses four stacked arc gauges: coolant above oil on the
+left, intake-air temperature above fuel level on the right. Each arc has a
+sliding tick-style needle, a dark unfilled track, a filled section, fixed scale
+labels, and an icon. Temperature arcs retain blue/cool and red/hot end caps;
+the fuel arc marks the low-fuel end in red and fills toward the reading. Its
+pump icon includes a left-pointing marker for the MX-5's filler side. The
+intake-air and fuel gauges show `--` on the car until their live data sources
+are confirmed; the local dev fixture supplies sample values for layout work.
 
-- **Tachometer** is the large, dominant dial (left-of-center), matching the
-  real ND cluster where the tach — not the speedo — is the big center
-  gauge. **Gear is shown digitally in its hub**, in the exact spot the real
-  cluster's Multi-Information Display nests gear/trip info inside the tach.
-  A red arc marks the redline zone.
-- **Speedometer** is a smaller dial to the right, same needle/tick-mark
-  treatment, with the digital speed value in its hub for at-a-glance
-  reading (common on real analog-plus-digital speedos).
-- **Coolant** is a vertical bar gauge (labeled CLT), not a circular dial —
-  closer to how the real stock coolant indicator itself is presented (a bar,
-  not a full gauge face) than a dial would be.
-- **Throttle** mirrors the coolant bar's style on the opposite edge, with a
-  brake-lamp dot above it.
-- **Oil, G-force, and steering** stay as simple digital readouts along the
-  bottom — the real ND cluster has no dedicated gauge for any of these at
-  all, so there's no stock convention to match; a dial here would be
-  inventing a gauge Mazda never built, not reproducing one.
 
-The dial sweep (135° to 405°, i.e. bottom-left to bottom-right through the
-top, 270° total) is the standard automotive-gauge convention, not a
-Mazda-specific measurement — their exact degrees aren't published anywhere
-we could find, so this is a faithful convention match rather than a pixel
-trace of the real part.
+The center holds compact gear and G-force readouts, with steering, throttle,
+and brake status below. The tachometer and speedometer are omitted from this
+layout.
 
-This was built and verified against the real, unmodified firmware GUI
-running in mzd-emu (see above) — including confirming the Applications-list
-tile and the redesigned panel both render correctly end-to-end, with live
-needle movement, redline-arc rendering, and color-coding verified for
-cold/normal/warning/overheat states.
+The four-gauge layout was checked in the local harness at the fixed
+800×480 CMU resolution. The Applications-list tile and overlay had previously
+been verified end-to-end in mzd-emu.
 
 ## Safety
 
