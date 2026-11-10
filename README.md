@@ -32,7 +32,9 @@ and collector container. Native POSIX mode requires GNU awk. BusyBox 1.25 tests 
   as explicit engineering-value fixtures; they are not evidence that the CMU exposes them.
 - MDI icons use a Canvas path fallback when Path2D is absent; ES5 parsing alone is not sufficient browser validation.
 
-No private dumps or usable real recordings were found locally. Replay is opt-in with a narrowly allowed JSONL format;
+No private dumps or usable real recordings were found locally. A separately labelled regression fixture transcribes a
+public, drive-derived sample from MiatOff's documentation; it has no timeline and is not a recording replay (see
+[tests/fixtures/README.md](tests/fixtures/README.md)). Replay is opt-in with a narrowly allowed JSONL format;
 see [dev/REPLAY.md](dev/REPLAY.md). Never commit recordings or firmware material. EOF stops publishing rather than
 pretending an old trace is live. A real trace needs permission, redaction and independent reference readings.
 

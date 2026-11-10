@@ -8,7 +8,7 @@ The earlier port worktree remains untouched. Original main remained clean after 
 Passing local checks:
 
 - npm ci: zero reported vulnerabilities.
-- npm test: 13 passing tests/entries. Includes current dashboard rendering fixtures, ES5 parsing, native/no-Path2D
+- npm test: initially 13 passing tests/entries; 14 after adding the explicitly labelled public documentation snapshot. Includes current dashboard rendering fixtures, ES5 parsing, native/no-Path2D
   rendering, raw units and correct intake/fuel names, unverified-value placeholders, embedded touch Back, no blanking on
   canvas click, and the adapted MiatOff menu/framework assertions.
 - python3 -m unittest discover -s tests: 15 passing tests, 30.181 seconds. Actual collector, fabricated replay/EOF,

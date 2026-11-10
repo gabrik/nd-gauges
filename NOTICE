@@ -6,6 +6,8 @@ Pinned source commit: 5d972dbe3929d39878f0c53353fed35df535d369
 
 - vendor/miatoff/miatoff-collector.sh: collector/miatoff-collector.sh, unmodified.
 - app/data.js: documented raw conversion formulas from meters/js/data.js.
+- tests/fixtures/miatoff-published-snapshot.txt: numeric excerpt from collector/README.md at the pinned revision;
+  a public documentation sample, not access to the private recording. See tests/fixtures/README.md.
 - Menu integration (cmu/menu): adapted from meters-app/; its app-routing idea
   follows Trevelopment/MZD-AIO, as acknowledged in the upstream source.
 - vendor/miatoff/launcher/: MiatOff launcher INI files, unmodified.
