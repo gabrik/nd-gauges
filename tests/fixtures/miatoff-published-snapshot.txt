@@ -1,0 +1,13 @@
+VehicleSpeed=12256
+EngineSpeed=1604
+AccelPedalPosition=661
+LongitudinalAccelerometer=3994
+LateralAcceleration=3977
+EngClnt_Te_Actl=129
+DR_IntakeAirTemp=58
+Out-CarTemperature=53
+YawRate=2051
+BrakePressure=152
+DR_Slope=32
+FuelGaugePosition=180
+LiveSeq=97

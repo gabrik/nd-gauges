@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Arguments intentionally ignored: this mock emits only synthetic VDT signals.
+while :; do
+    if [ -f "$MO_DEV_DATA/feed" ]; then cat "$MO_DEV_DATA/signals.txt"; fi
+    sleep 0.1
+done

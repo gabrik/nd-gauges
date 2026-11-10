@@ -1,0 +1,21 @@
+nd-gauges is distributed under GPL-3.0; see LICENSE.
+
+Includes and adapts GPL-3.0-or-later work from CeyssensHelder/MiatOff:
+https://github.com/CeyssensHelder/MiatOff
+Pinned source commit: 5d972dbe3929d39878f0c53353fed35df535d369
+
+- vendor/miatoff/miatoff-collector.sh: collector/miatoff-collector.sh, unmodified.
+- app/data.js: documented raw conversion formulas from meters/js/data.js.
+- tests/fixtures/miatoff-published-snapshot.txt: numeric excerpt from collector/README.md at the pinned revision;
+  a public documentation sample, not access to the private recording. See tests/fixtures/README.md.
+- Menu integration (cmu/menu): adapted from meters-app/; its app-routing idea
+  follows Trevelopment/MZD-AIO, as acknowledged in the upstream source.
+- vendor/miatoff/launcher/: MiatOff launcher INI files, unmodified.
+- tests/menu.test.js: adapted from meters-app/tests/test_meters_app.js.
+- Installer safety/USB-launcher design follows MiatOff and Miatafy/TouchTune.
+- cmu/record.sh and record-filter.awk: narrow adaptations of dump-stick/stick/dump.sh CALIBRATE timestamping/lifecycle
+  and collector signal mapping; no FULL dump, private recordings or Mazda files included. tools/build-recorder.py uses
+  the same attributed launcher INIs. Recording files themselves are private and not included.
+
+Original SPDX headers and the upstream GPL licence are retained. No Mazda
+firmware files, private dumps or private vehicle recordings are distributed.

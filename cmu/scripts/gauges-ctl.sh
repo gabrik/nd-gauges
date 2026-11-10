@@ -4,11 +4,16 @@
 set -u
 
 STATE_DIR="${GAUGES_STATE_DIR:-/tmp/nd-gauges}"
-PIDFILE="$STATE_DIR/daemon.pid"
+PIDFILE="$STATE_DIR/collector.pid"
 DAEMON="$(dirname "$0")/gauges-daemon.sh"
 LOG="$STATE_DIR/daemon.log"
 
-is_running() { [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }
+is_running() {
+	pid=$(cat "$PIDFILE" 2>/dev/null)
+	case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+	kill -0 "$pid" 2>/dev/null &&
+		tr '\000' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q 'miatoff-collector'
+}
 
 case "${1:-status}" in
 start)
@@ -24,7 +29,7 @@ stop)
 status)
 	if is_running; then
 		echo "running (pid $(cat "$PIDFILE"))"
-		[ -f "$STATE_DIR/cardata.json" ] && cat "$STATE_DIR/cardata.json"
+		[ -f "$STATE_DIR/live.txt" ] && cat "$STATE_DIR/live.txt"
 	else
 		echo "not running"
 	fi

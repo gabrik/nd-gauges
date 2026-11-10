@@ -1,0 +1,7 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+case "$1:$2" in
+    -n:vdm_vdt_current_data) cat "$MO_DEV_DATA/cvd.txt" ;;
+    -n:vdm) cat "$MO_DEV_DATA/vdm.txt" ;;
+    *) echo 'mock-smdb-read: unsupported namespace' >&2; exit 1 ;;
+esac
