@@ -13,7 +13,8 @@ old worktree. Main base e496a6e; old worktree nd-gauges-miatoff-port retained un
 - Exclude firmware fonts from USB; use installed fonts → inspect generated MANIFEST and assert no TTF payload.
 - Exercise actual collector/new dashboard without Path2D, intake/fuel readings, OFFLINE and recovery → browser test.
 - Preserve old README as explicitly historical documentation; replace obsolete preview/installer test entry points.
-- Require signed commits. Signing availability probe failed (locked GPG key); do not create unsigned commits or publish.
+- Require signed commits. The operator unlocked GPG; implementation commit 097d7d4 is signed and verified locally.
+  No unsigned commits were created. Publication of the nd-gauges branch remains a separate operator decision.
 
 ## Decisions
 

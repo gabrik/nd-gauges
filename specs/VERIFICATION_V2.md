@@ -37,9 +37,9 @@ Four files revised; no production collector, UI, installer or firmware assets ch
 
 ## Not completed / not claimed
 
-The signing key is still locked (availability probe failed). No unsigned commits were created and no revision was pushed.
-The published draft PR and its previous successful CI refer to the old signed tip, not these local revisions. Full remote
-CI for the revised code remains pending signed publication. No firmware blobs, private dumps or real recordings were used.
+The operator unlocked the signing key. PR1 revisions f4cc177 and f6c83fb and the nd-gauges implementation 097d7d4
+were committed with locally valid GPG signatures. No unsigned commits were created. Full remote CI for the revised
+code remains pending publication/results; the earlier successful CI does not validate these new commits. No firmware blobs, private dumps or real recordings were used.
 No real Opera Presto, mzd-emu, MMUI, USB launcher or car acceptance was performed. Modern Chrome with Path2D disabled
 is an additional compatibility check, not an Opera emulator. Stock hash gates, hardware timing and recovery still require
 independent review and real-device validation before use. Firmware-font binaries inherited in main require licence review;
