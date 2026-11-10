@@ -49,6 +49,22 @@ This differs from the old overlay route tested in mzd-emu. The framework tests a
 **the revised menu path still needs mzd-emu/Opera/MMUI and hardware acceptance**. Current `main`'s original rendering and
 launcher fixture tests are retained alongside the adapted MiatOff framework tests.
 
+## Read-only recording stick
+
+A separate, narrow recording mode is available; it is **not** the installer or a firmware dump:
+
+```sh
+python3 tools/build-recorder.py --output dist/recorder-usb
+```
+
+Copy all files to a dedicated empty FAT32/MBR stick, insert after boot and confirm **Gauges recorder**. It captures five
+minutes of whitelisted raw vehicle signals and selected slow readings into replay-compatible JSONL. It never patches
+CMU configuration or copies firmware/GPS/phone data. Existing collectors are refused, not stopped. Let slow reads finish;
+wait for the completion dialog before removing the stick. Do not combine recorder and installation sticks.
+
+See [docs/RECORDING.md](docs/RECORDING.md) for privacy limitations, safe recording steps, partial captures and replay.
+This path has only synthetic BusyBox verification; real scanner/UI/hardware acceptance remains outstanding.
+
 ## USB installer — review before using
 
 ```sh

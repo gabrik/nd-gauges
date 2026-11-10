@@ -73,6 +73,8 @@ done
 PART="$OUT/session.jsonl.part"
 printf 'format=nd-gauges-jsonl-v1\nrequested_seconds=%s\n' "$DURATION" > "$OUT/meta.txt"
 slow_loop() {
+    # This asynchronous worker must not inherit the parent session's cleanup trap.
+    trap - EXIT INT TERM HUP
     while [ ! -f "$LOCK/stop" ]; do
         if [ -x "$SMDB" ]; then
             "$SMDB" -n vdm_vdt_current_data 2>/dev/null | awk '

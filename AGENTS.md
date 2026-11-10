@@ -26,4 +26,6 @@ npm run test:browser  # Docker and a supported Playwright Chromium; ND_BROWSER_C
 
 `tests/test_install.py` checks tampering, conflicts, exact removal, failed publications, interruption and USB selection.
 `tests/test_collector.py` runs the actual unchanged collector with fabricated inputs. `dev/run.py` serves only the app and
-live.txt on loopback. Recording requirements are in dev/REPLAY.md.
+live.txt on loopback. Recording requirements are in dev/REPLAY.md; the separate read-only USB recorder is documented
+in docs/RECORDING.md. Recorder shell tests run only under a synthetic root with fake D-Bus/smdb tools. Never test its
+entry script directly on a host or signal a real smdb process. Preserve timestamp/privacy checks and let slow reads finish.
