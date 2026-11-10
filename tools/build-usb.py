@@ -4,6 +4,7 @@
 import argparse
 import hashlib
 import io
+import re
 from pathlib import Path
 import shutil
 import zipfile
@@ -27,11 +28,13 @@ def cksum(data):
     return (~crc) & 0xFFFFFFFF
 
 
-def launcher_name():
+def launcher_name(marker='GAUGES.ID', script='install-gauges.sh', identity=ID):
+    if not all(re.fullmatch(r'[A-Za-z0-9.-]+', part) for part in (marker, script)):
+        raise ValueError('Unsafe launcher component')
     return ('$(S=${HOME%root};B=$ND_ROOT;N=0;for D in sda1 sdb1 sdc1 sdd1;do '
-            'P=$B${S}tmp${S}mnt${S}$D;M=$P${S}GAUGES.ID;'
-            f'[ -f $M ]&&set -- $(cksum $M)&&[ $1 = {cksum(ID)} ]&&[ $2 = {len(ID)} ]&&'
-            '{ N=$((N+1));I=$P${S}install-gauges.sh;};done;'
+            'P=$B${S}tmp${S}mnt${S}$D;M=$P${S}' + marker + ';'
+            f'[ -f $M ]&&set -- $(cksum $M)&&[ $1 = {cksum(identity)} ]&&[ $2 = {len(identity)} ]&&'
+            '{ N=$((N+1));I=$P${S}' + script + ';};done;'
             '[ $N = 1 ]&&[ -f $I ]&&sh $I).up')
 
 
