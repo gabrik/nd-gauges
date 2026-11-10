@@ -1,221 +1,248 @@
 #!/bin/sh
-# nd-gauges installer — runs ON THE CMU as root via the .up filename injection.
-#
-# Installs the overlay app + data daemon, starts the daemon immediately, and
-# tries to hook daemon autostart into a startup script if one is found.
-# Put an empty file named UNINSTALL next to GAUGES.ID on the USB to remove.
-#
-# Safety pattern (watchdog + rw remount + ro restore) mirrors Miatafy
-# TouchTune (GPL-3.0): https://github.com/Miatafy/TouchTune
-
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Guarded nd-gauges installer, modelled on MiatOff's Meters transaction.
+# Known-stock hashes from MiatOff 5d972dbe3929d39878f0c53353fed35df535d369.
+# No Common.js edits, unknown-file overwrites, or arbitrary startup hooks.
 set -u
-
-REPO_DIR=$(CDPATH='' cd "$(dirname "$0")" && pwd) || exit 1
-cd "$REPO_DIR" || exit 1
-
-LOG="$REPO_DIR/nd-gauges.log"
-WATCHDOG_VALUE="/sys/class/gpio/Watchdog Disable/value"
-GUI_DIR="/jci/gui/gauges"
-USERJS="/jci/opera/opera_dir/userjs/ndgauges.js"
-SCRIPTS_DIR="/jci/scripts"
-STATE_DIR="/tmp/nd-gauges"
-
-# Applications-list integration (the only production launcher). The stock
-# systemApp.js and its English dictionary are backed up before editing; all
-# other installed assets are new files. Both stock files are restored on
-# uninstall. See README "Applications-list integration" for why this is
-# needed and what the risk tradeoff is.
-SYSTEM_APP_JS="/jci/gui/apps/system/js/systemApp.js"
-SYSTEM_APP_DICT="/jci/gui/resources/js/system/systemAppDict_en_US.js"
-BACKUP_SUFFIX=".nd-gauges-orig"
-
-log() { printf '%s [nd-gauges] %s\n' "$(date '+%H:%M:%S' 2>/dev/null || echo '?')" "$1" | tee -a "$LOG" >&2; }
-
-popup() { # text
-	[ -x /jci/tools/jci-dialog ] || return 0
-	killall -q jci-dialog 2>/dev/null || true
-	/jci/tools/jci-dialog --info --title="Gauges" --text="$1" --no-cancel \
-		>/dev/null 2>&1 &
-}
-
-watchdog_off() { [ -f "$WATCHDOG_VALUE" ] && printf '1\n' > "$WATCHDOG_VALUE"; }
-watchdog_on()  { [ -f "$WATCHDOG_VALUE" ] && printf '0\n' > "$WATCHDOG_VALUE"; }
-
+OPERA_STOCK=a6db0eb9a67198dd0c55cae34ad7459a42241392421710196acba6313a2a988e
+GAP2_STOCK=2ec71fc955d0107a6e90d1ab4e6f00c9438b56d3e621ef018d57c8ef07bfae7f
+USB=$(CDPATH='' cd "$(dirname "$0")" && pwd) || exit 1
+R=${ND_ROOT:-}
+if [ -n "$R" ]; then
+    case "$R" in /*) ;; *) echo 'Test root must be absolute' >&2; exit 1 ;; esac
+    [ "$R" != / ] && [ "$(cat "$R/.nd-gauges-test-root" 2>/dev/null)" = synthetic ] || exit 1
+fi
+APP="$R/jci/gui/apps/ndgauges"
+JS="$R/jci/opera/opera_dir/userjs-ndgauges"
+STATE="$R/jci/nd-gauges-state"
+OPERA="$R/jci/opera/opera_home/opera.ini"
+GAP="$R/jci/scripts/stage_gap2.sh"
+WD='/sys/class/gpio/Watchdog Disable/value'
 RW=0
-finalize() {
-	if [ "$RW" = 1 ]; then
-		mount -o ro,remount / 2>/dev/null && log "root remounted read-only" \
-			|| log "ERROR: could not remount root read-only"
-		watchdog_on
-	fi
-	sync 2>/dev/null || true
+WD_OFF=0
+log() { printf '%s\n' "[nd-gauges] $*" | tee -a "$USB/nd-gauges.log" >&2; }
+exists() { [ -e "$1" ] || [ -L "$1" ]; }
+sha() {
+    [ -f "$1" ] && [ ! -L "$1" ] || return 1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | awk '{print $1}'
+    else
+        openssl dgst -sha256 "$1" | awk '{print $NF}'
+    fi
 }
-trap finalize EXIT HUP INT TERM
-
-go_rw() {
-	log "disabling watchdog, remounting root read-write"
-	watchdog_off
-	mount -o rw,remount / || { log "ERROR: rw remount failed"; exit 1; }
-	RW=1
+finish() {
+    code=$?
+    trap - EXIT
+    if [ "$RW" = 1 ] && [ -z "$R" ]; then
+        mount -o ro,remount / || { log 'ERROR: root still writable; restart the unit'; code=1; }
+    fi
+    [ "$WD_OFF" = 0 ] || printf '0\n' > "$WD"
+    sync
+    exit "$code"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
+rw() {
+    [ -n "$R" ] && { RW=1; return 0; }
+    if [ -f "$WD" ]; then
+        printf '1\n' > "$WD" || return 1
+        WD_OFF=1
+    fi
+    mount -o rw,remount / || return 1
+    RW=1
+}
+render_opera() {
+    awk '
+        $0 == "User JavaScript=0" {print "User JavaScript=1"; print "Allow File XMLHttpRequest=1"; a++; next}
+        $0 == "User JavaScript File=$OPERA_DIR/userjs/" {
+            print "User JavaScript File=/jci/opera/opera_dir/userjs-ndgauges/"; b++; next
+        }
+        $0 == "Allow File XMLHttpRequest=1" {bad=1}
+        {print}
+        END {if (a != 1 || b != 1 || bad) exit 1}
+    ' "$1"
+}
+render_gap() {
+    cat "$1" && printf '\n# nd-gauges: passive MiatOff collector; tmpfs only.\n[ -f /jci/gui/apps/ndgauges/collector/gauges-daemon.sh ] && /bin/sh /jci/gui/apps/ndgauges/collector/gauges-daemon.sh </dev/null >/dev/null 2>&1 &\n'
+}
+# Validate the manifest before using any of its paths. No traversal or symlinks.
+manifest_ok() {
+    local base="$1" manifest="$2" sum rel extra n=0
+    [ -f "$manifest" ] && [ ! -L "$manifest" ] || return 1
+    while read -r sum rel extra; do
+        [ -z "$extra" ] && [ "${#sum}" = 64 ] || return 1
+        case "$sum" in *[!0-9a-f]*) return 1 ;; esac
+        case "$rel" in app/?*|userjs/?*) ;; *) return 1 ;; esac
+        case "$rel" in *..*|*//*|*/|*[!a-zA-Z0-9_./-]*) return 1 ;; esac
+        if [ -n "$base" ]; then
+            [ "$(sha "$base/$rel")" = "$sum" ] || return 1
+        fi
+        n=$((n + 1))
+    done < "$manifest"
+    [ "$n" -gt 0 ]
+}
+area_ok() {
+    local dir="$1" area="$2" sum rel extra n=0 links
+    exists "$dir" || return 0
+    [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+    while read -r sum rel extra; do
+        case "$rel" in "$area"/*)
+            [ "$(sha "$dir/${rel#*/}")" = "$sum" ] || return 1
+            n=$((n + 1)) ;;
+        esac
+    done < "$STATE/manifest"
+    [ "$(find "$dir" -type f | wc -l | tr -d ' ')" = "$n" ] || return 1
+    links=$(find "$dir" -type l)
+    if [ "$area" = app ]; then
+        [ "$links" = "$APP/gauges/live.txt" ] &&
+            [ "$(readlink "$APP/gauges/live.txt")" = /tmp/nd-gauges/live.txt ] || return 1
+    else
+        [ -z "$links" ] || return 1
+    fi
+}
+known_config() {
+    local actual
+    actual=$(sha "$1") || return 1
+    [ "$actual" = "$2" ] || [ "$actual" = "$(sha "$3")" ]
+}
+# The saved originals must be stock. Patched files must be precisely our
+# transformation of those originals, not merely something named "patched".
+temp_ok() {
+    exists "$1.ndgauges.tmp" || return 0
+    local sum
+    sum=$(sha "$1.ndgauges.tmp") || return 1
+    [ "$sum" = "$(sha "$2")" ] || [ "$sum" = "$(sha "$3")" ]
+}
+state_ok() {
+    ! exists "$APP.new" && ! exists "$JS.new" && ! exists "$STATE.new" || return 1
+    [ -d "$STATE" ] && [ ! -L "$STATE" ] &&
+        [ -z "$(find "$STATE" -type l)" ] &&
+        [ "$(find "$STATE" -type f | wc -l | tr -d ' ')" = 6 ] &&
+        [ "$(cat "$STATE/marker" 2>/dev/null)" = nd-gauges-state-v1 ] &&
+        [ "$(sha "$STATE/opera.stock")" = "$OPERA_STOCK" ] &&
+        [ "$(sha "$STATE/gap2.stock")" = "$GAP2_STOCK" ] &&
+        manifest_ok '' "$STATE/manifest" || return 1
+    render_opera "$STATE/opera.stock" | cmp - "$STATE/opera.patched" || return 1
+    render_gap "$STATE/gap2.stock" | cmp - "$STATE/gap2.patched" || return 1
+    temp_ok "$OPERA" "$STATE/opera.stock" "$STATE/opera.patched" &&
+        temp_ok "$GAP" "$STATE/gap2.stock" "$STATE/gap2.patched" &&
+        known_config "$OPERA" "$OPERA_STOCK" "$STATE/opera.patched" &&
+        known_config "$GAP" "$GAP2_STOCK" "$STATE/gap2.patched" &&
+        area_ok "$APP" app && area_ok "$JS" userjs
+}
+prepare_state() {
+    mkdir "$STATE.new" || return 1
+    printf 'nd-gauges-state-v1\n' > "$STATE.new/marker" &&
+        cp "$USB/MANIFEST" "$STATE.new/manifest" &&
+        cp -p "$OPERA" "$STATE.new/opera.stock" && cp -p "$GAP" "$STATE.new/gap2.stock" &&
+        render_opera "$OPERA" > "$STATE.new/opera.patched" &&
+        render_gap "$GAP" > "$STATE.new/gap2.patched" || return 1
+    chmod 644 "$STATE.new/opera.patched" && chmod 755 "$STATE.new/gap2.patched" || return 1
+    sync
+    mv "$STATE.new" "$STATE" && state_ok
+}
+publish() {
+    local src="$1" dst="$2"
+    [ ! -L "$dst.ndgauges.tmp" ] || return 1
+    cp -p "$src" "$dst.ndgauges.tmp" &&
+        [ "$(sha "$dst.ndgauges.tmp")" = "$(sha "$src")" ] || return 1
+    sync
+    mv -f "$dst.ndgauges.tmp" "$dst" && sync
+}
+install_area() {
+    local dir="$1" area="$2" sum rel extra
+    mkdir "$dir.new" || return 1
+    while read -r sum rel extra; do
+        case "$rel" in "$area"/*)
+            mkdir -p "$dir.new/$(dirname "${rel#*/}")" &&
+                cp "$USB/payload/$rel" "$dir.new/${rel#*/}" &&
+                chmod 644 "$dir.new/${rel#*/}" &&
+                [ "$(sha "$dir.new/${rel#*/}")" = "$sum" ] || return 1 ;;
+        esac
+    done < "$STATE/manifest"
+    if [ "$area" = app ]; then
+        ln -s /tmp/nd-gauges/live.txt "$dir.new/gauges/live.txt" || return 1
+    fi
+    find "$dir.new" -type d -exec chmod 755 '{}' ';'
+    sync
+    mv "$dir.new" "$dir" && area_ok "$dir" "$area"
+}
+stop_collector() {
+    local pid n=0
+    pid=$(cat /tmp/nd-gauges/collector.pid 2>/dev/null)
+    case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+    [ -z "$R" ] || return 0
+    kill -0 "$pid" 2>/dev/null || return 0
+    tr '\000' ' ' < "/proc/$pid/cmdline" | grep -Fq "$APP/collector/miatoff-collector.sh" || return 1
+    kill -TERM "$pid" || return 1
+    while kill -0 "$pid" 2>/dev/null && [ "$n" -lt 10 ]; do sleep 1; n=$((n + 1)); done
+    ! kill -0 "$pid" 2>/dev/null
+}
+restore() {
+    # Disable the HMI hook before removing its files. Never signal smdb-read.
+    publish "$STATE/opera.stock" "$OPERA" && publish "$STATE/gap2.stock" "$GAP" || return 1
+    rm -rf "$APP" "$JS" "$APP.new" "$JS.new" || return 1
+    sync
+    rm -rf "$STATE"
+}
+checkpoint() {
+    # Failure/crash injection exists only inside an explicitly marked synthetic root.
+    [ -n "$R" ] || return 0
+    [ "${ND_CRASH_AT:-}" != "$1" ] || kill -KILL $$
+    [ "${ND_FAIL_AT:-}" != "$1" ]
+}
+confirm() {
+    [ -n "$R" ] && return 0
+    [ -x /jci/tools/jci-dialog ] || return 1
+    /jci/tools/jci-dialog --confirm --title=nd-gauges --text="$1" --ok-label=CONFIRM --cancel-label=CANCEL
 }
 
-# ---------------------------------------------------- Applications-list patch
-# Adds one row ('Gauges') to the real Applications list by editing
-# systemApp.js's _initApplicationsDataList (plain, uncompiled JS, not a
-# compiled .so) and registering the appName in _applicationsCtxtWiseAppNames.
-# Selecting the row is intercepted entirely client-side in gauges.js (it
-# patches framework.sendEventToMmui to catch mmuiEvent 'SelectNdGauges'), so
-# no native/compiled code needs to understand the new row at all.
-
-brace_balance_ok() { # file -> true if "{" count == "}" count (coarse JS sanity check)
-	o=$(grep -o '{' "$1" | wc -l)
-	c=$(grep -o '}' "$1" | wc -l)
-	[ "$o" -eq "$c" ]
-}
-
-patch_applications_list() {
-	if ! [ -f "$SYSTEM_APP_JS" ] || ! [ -f "$SYSTEM_APP_DICT" ]; then
-		log "WARNING: $SYSTEM_APP_JS or dict not found; Gauges cannot be launched until the Applications-list patch succeeds"
-		return 1
-	fi
-	if grep -q "'ndgauges'" "$SYSTEM_APP_JS" 2>/dev/null; then
-		# Upgrade the old display name without replacing the original backup.
-		[ -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX" ] || cp -a "$SYSTEM_APP_DICT" "$SYSTEM_APP_DICT$BACKUP_SUFFIX" || return 1
-		sed -i 's/"NdGauges"[[:space:]]*:[[:space:]]*"nd-gauges"/"NdGauges" : "Gauges"/' "$SYSTEM_APP_DICT" || return 1
-		grep -q '"NdGauges"[[:space:]]*:[[:space:]]*"Gauges"' "$SYSTEM_APP_DICT" || return 1
-		log "Applications-list entry already present; display name is Gauges"
-		return 0
-	fi
-
-	[ -f "$SYSTEM_APP_JS$BACKUP_SUFFIX" ] || cp -a "$SYSTEM_APP_JS" "$SYSTEM_APP_JS$BACKUP_SUFFIX"
-	[ -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX" ] || cp -a "$SYSTEM_APP_DICT" "$SYSTEM_APP_DICT$BACKUP_SUFFIX"
-
-	_item_file="$STATE_DIR/ndg_app_item.txt"
-	_dict_file="$STATE_DIR/ndg_dict_item.txt"
-	mkdir -p "$STATE_DIR"
-	cat > "$_item_file" << 'EOF'
-        { appData : { appName : 'ndgauges', isVisible : true, audioSourceId : 'None', mmuiEvent : 'SelectNdGauges' }, text1Id : 'NdGauges', disabled : false, itemStyle : 'style01', hasCaret : false }
-EOF
-	cat > "$_dict_file" << 'EOF'
-	"NdGauges" : "Gauges",
-EOF
-
-	# 1) add our item to _initApplicationsDataList's items array (anchor is the
-	#    one line with both SelectAndroidAuto and text1Id:'AndroidAuto', —
-	#    unique on firmware 74.00.324/324A, verified against five other
-	#    SelectAndroidAuto occurrences used by other data lists in this file)
-	sed -i "/mmuiEvent : 'SelectAndroidAuto'.*text1Id : 'AndroidAuto',/{
-		s/ }\$/ },/
-		r $_item_file
-	}" "$SYSTEM_APP_JS"
-
-	# 2) register the appName so _buildApplicationsDataList includes it
-	#    (both vehicle-configuration branches of _updateApplicationStructure)
-	sed -i 's/"androidauto"\]/"androidauto","ndgauges"]/g' "$SYSTEM_APP_JS"
-
-	# 3) add the display string
-	sed -i "/\"APDevice\" :/r $_dict_file" "$SYSTEM_APP_DICT"
-
-	rm -f "$_item_file" "$_dict_file"
-
-	if grep -q "'ndgauges'" "$SYSTEM_APP_JS" && grep -q "'SelectNdGauges'" "$SYSTEM_APP_JS" \
-		&& [ "$(grep -c '"ndgauges"\]' "$SYSTEM_APP_JS")" -ge 2 ] \
-		&& grep -q 'NdGauges' "$SYSTEM_APP_DICT" \
-		&& brace_balance_ok "$SYSTEM_APP_JS" && brace_balance_ok "$SYSTEM_APP_DICT"
-	then
-		log "Applications-list patch applied (Gauges tile)"
-		return 0
-	fi
-
-	log "ERROR: Applications-list patch failed validation — restoring originals"
-	cp -a "$SYSTEM_APP_JS$BACKUP_SUFFIX" "$SYSTEM_APP_JS"
-	cp -a "$SYSTEM_APP_DICT$BACKUP_SUFFIX" "$SYSTEM_APP_DICT"
-	return 1
-}
-
-restore_applications_list() {
-	if [ -f "$SYSTEM_APP_JS$BACKUP_SUFFIX" ]; then
-		cp -a "$SYSTEM_APP_JS$BACKUP_SUFFIX" "$SYSTEM_APP_JS" && rm -f "$SYSTEM_APP_JS$BACKUP_SUFFIX"
-		log "systemApp.js restored from backup"
-	fi
-	if [ -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX" ]; then
-		cp -a "$SYSTEM_APP_DICT$BACKUP_SUFFIX" "$SYSTEM_APP_DICT" && rm -f "$SYSTEM_APP_DICT$BACKUP_SUFFIX"
-		log "systemAppDict restored from backup"
-	fi
-}
-
-# ------------------------------------------------------------------ uninstall
-if [ -f "$REPO_DIR/UNINSTALL" ]; then
-	popup "Removing Gauges..."
-	go_rw
-	restore_applications_list
-	rm -f "$USERJS"
-	rm -rf "$GUI_DIR"
-	rm -f "$SCRIPTS_DIR/gauges-daemon.sh" "$SCRIPTS_DIR/gauges-ctl.sh"
-	# remove guarded autostart lines
-	for f in /etc/rc.d/rc.local /jci/scripts/autorun.sh; do
-		[ -f "$f" ] && sed -i '/# nd-gauges autostart/,+1d' "$f" 2>/dev/null
-	done
-	log "uninstalled"
-	popup "Gauges removed. Remove the USB stick."
-	exit 0
-fi
-
-# --------------------------------------------------------------------- checks
-[ -d /jci/gui ] || { log "ERROR: /jci/gui not found — not a Mazda CMU?"; exit 1; }
-[ -d payload ] || { log "ERROR: payload/ missing on USB"; exit 1; }
-
-# Firmware check (informational): 74.00.324/324A expected.
-FW=$(grep -rsoh '74\.00\.[0-9A-Za-z]*' /jci/etc /jci/version* 2>/dev/null | head -1)
-if [ -n "$FW" ]; then
-	log "detected firmware: $FW"
-	case "$FW" in
-		74.00.324|74.00.324A) : ;;
-		*) log "WARNING: firmware '$FW' is not 74.00.324/324A — continuing anyway" ;;
-	esac
-else
-	log "WARNING: could not detect firmware version — continuing anyway"
-fi
-
-popup "Installing Gauges..."
-
-# -------------------------------------------------------------------- install
-go_rw
-
-mkdir -p "$GUI_DIR" "$GUI_DIR/fonts" "$SCRIPTS_DIR"
-cp payload/app/gauges.css "$GUI_DIR/gauges.css" || { log "ERROR: css copy failed"; exit 1; }
-cp payload/app/gauges.js "$USERJS" || { log "ERROR: userjs copy failed"; exit 1; }
-cp payload/app/fonts/*.ttf "$GUI_DIR/fonts/" || { log "ERROR: font copy failed"; exit 1; }
-cp payload/cmu/scripts/gauges-daemon.sh "$SCRIPTS_DIR/gauges-daemon.sh"
-cp payload/cmu/scripts/gauges-ctl.sh "$SCRIPTS_DIR/gauges-ctl.sh"
-chmod +x "$SCRIPTS_DIR/gauges-daemon.sh" "$SCRIPTS_DIR/gauges-ctl.sh"
-
-# cardata.json lives in tmpfs (no flash wear); symlink into the web root.
-mkdir -p "$STATE_DIR"
-ln -sf "$STATE_DIR/cardata.json" "$GUI_DIR/cardata.json"
-
-# Daemon autostart: append a guarded launch line to the first hook that
-# exists on this firmware. Verified over SSH after first install.
-HOOKED=0
-for f in /etc/rc.d/rc.local /jci/scripts/autorun.sh; do
-	if [ -f "$f" ] && ! grep -q 'nd-gauges autostart' "$f" 2>/dev/null; then
-		{ echo '# nd-gauges autostart';
-		  echo "[ -x $SCRIPTS_DIR/gauges-ctl.sh ] && sh $SCRIPTS_DIR/gauges-ctl.sh start &";
-		} >> "$f" && { HOOKED=1; log "autostart hook added to $f"; }
-	fi
+# Refuse competing and legacy layouts rather than silently taking them over.
+for path in "$R/jci/gui/apps/miatoff" "$R/jci/opera/opera_dir/userjs-miatoff" \
+            "$R/jci/gui/gauges" "$R/jci/scripts/gauges-daemon.sh" \
+            "$R/jci/opera/opera_dir/userjs/ndgauges.js"; do
+    exists "$path" && { log "Conflicting/legacy installation: $path; nothing changed"; exit 1; }
 done
-[ "$HOOKED" = 0 ] && log "NOTE: no known autostart hook found; daemon started for this boot only (use gauges-ctl.sh start over SSH)"
-
-patch_applications_list || {
-	log "ERROR: installation incomplete — Applications-list entry unavailable"
-	popup "Gauges installation incomplete: Applications entry could not be installed. Check nd-gauges.log."
-	exit 1
+[ -d "$R/jci/gui/apps" ] && [ -d "$R/jci/opera/opera_dir" ] || exit 1
+REMOVE=0
+[ ! -f "$USB/UNINSTALL" ] && [ ! -f "$USB/ND-GAUGES-RESTORE" ] || REMOVE=1
+if exists "$STATE"; then
+    state_ok || { log 'Unknown installed state; refusing changes'; exit 1; }
+    if [ "$REMOVE" = 1 ] || [ ! -d "$APP" ] || [ ! -d "$JS" ] ||
+        [ "$(sha "$OPERA")" != "$(sha "$STATE/opera.patched")" ] ||
+        [ "$(sha "$GAP")" != "$(sha "$STATE/gap2.patched")" ]; then
+        if [ ! -f "$USB/ND-GAUGES-RESTORE" ]; then
+            confirm 'Remove/recover nd-gauges and restore the original configuration?' || exit 0
+        fi
+        stop_collector || { log 'Collector could not stop safely'; exit 1; }
+        rw && restore || { log 'Restore failed; keep backups and retry'; exit 1; }
+        log 'Restored. Remove stick and restart the unit. Run again to reinstall if desired.'
+        exit 0
+    fi
+    cmp "$USB/MANIFEST" "$STATE/manifest" >/dev/null 2>&1 || {
+        log 'Different payload: remove the existing version before installing a new one'; exit 1;
+    }
+    log 'Already installed; nothing changed'
+    exit 0
+fi
+[ "$(sha "$OPERA")" = "$OPERA_STOCK" ] && [ "$(sha "$GAP")" = "$GAP2_STOCK" ] || {
+    log 'Stock configuration hashes differ from analysed 74.00.324A; nothing changed'; exit 1;
 }
-
-log "files installed; starting daemon"
-sh "$SCRIPTS_DIR/gauges-ctl.sh" start >> "$LOG" 2>&1 \
-	&& log "daemon running" || log "WARNING: daemon did not start (check $LOG)"
-
-popup "Gauges installed. Open Applications and select Gauges. Remove the USB stick."
-log "install complete"
-exit 0
+for path in "$APP" "$JS" "$STATE.new" "$APP.new" "$JS.new" "$OPERA.ndgauges.tmp" "$GAP.ndgauges.tmp"; do
+    exists "$path" && { log "Unknown existing path: $path"; exit 1; }
+done
+[ "$REMOVE" = 0 ] || { log 'Not installed; nothing changed'; exit 0; }
+manifest_ok "$USB/payload" "$USB/MANIFEST" || { log 'Damaged or invalid payload'; exit 1; }
+[ -z "$(find "$USB/payload" -type l)" ] || { log 'Payload symlinks prohibited'; exit 1; }
+confirm 'Install experimental nd-gauges? Restart the unit after removing the stick.' || exit 0
+rw && prepare_state || { log 'Cannot prepare verified backups; no configuration edits attempted'; exit 1; }
+if ! { install_area "$APP" app && checkpoint app &&
+       install_area "$JS" userjs && checkpoint userjs &&
+       publish "$STATE/gap2.patched" "$GAP" && checkpoint gap2 &&
+       publish "$STATE/opera.patched" "$OPERA" && checkpoint opera; }; then
+    log 'Installation failed; rolling back'
+    restore || log 'ERROR: rollback incomplete; retain stick/backups and use ND-GAUGES-RESTORE'
+    exit 1
+fi
+log 'Installed. Remove stick and restart the unit. Experimental; not car-validated.'

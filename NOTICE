@@ -1,0 +1,16 @@
+nd-gauges is distributed under GPL-3.0; see LICENSE.
+
+Includes and adapts GPL-3.0-or-later work from CeyssensHelder/MiatOff:
+https://github.com/CeyssensHelder/MiatOff
+Pinned source commit: 5d972dbe3929d39878f0c53353fed35df535d369
+
+- vendor/miatoff/miatoff-collector.sh: collector/miatoff-collector.sh, unmodified.
+- app/data.js: documented raw conversion formulas from meters/js/data.js.
+- Menu integration (cmu/menu): adapted from meters-app/; its app-routing idea
+  follows Trevelopment/MZD-AIO, as acknowledged in the upstream source.
+- vendor/miatoff/launcher/: MiatOff launcher INI files, unmodified.
+- tests/menu.test.js: adapted from meters-app/tests/test_meters_app.js.
+- Installer safety/USB-launcher design follows MiatOff and Miatafy/TouchTune.
+
+Original SPDX headers and the upstream GPL licence are retained. No Mazda
+firmware files, private dumps or private vehicle recordings are distributed.

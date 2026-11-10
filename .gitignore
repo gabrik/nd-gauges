@@ -5,3 +5,9 @@ dist/
 *.log
 __pycache__/
 .DS_Store
+node_modules/
+test-results/
+playwright-report/
+recordings/
+dumps/
+miatoff-dumps/

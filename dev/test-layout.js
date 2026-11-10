@@ -39,7 +39,14 @@ class TestDate extends Date {
 }
 const sandbox = {
     Date: TestDate,
-    window: {GAUGES_DEV: true, innerWidth: 800, innerHeight: 480},
+    // Rendering fixtures are engineering values; raw decoding is tested separately.
+    window: {GAUGES_DEV: true, innerWidth: 800, innerHeight: 480,
+        NDGaugesPath: require('../app/vector.js'),
+        NDGaugesData: class {
+            ingest(text) { this.value = JSON.parse(text); this.updated = now; return true; }
+            stale() { return this.updated === undefined || now - this.updated > 2000; }
+        }},
+
     document: {
         body: element(),
         createElement: element,
@@ -215,7 +222,7 @@ assert.ok(render(sample).includes('91°'), 'legacy canvas with width-only text m
 const productionStart = elements.length;
 const forwarded = [];
 const production = {...sandbox,
-    window: {innerWidth: 800, innerHeight: 480},
+    window: {...sandbox.window, GAUGES_DEV: false, __ndGaugesLoaded: false},
     document: {...sandbox.document,
         getElementById: id => elements.slice(productionStart).find(node => node.id === id)},
     framework: {

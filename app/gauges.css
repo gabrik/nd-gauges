@@ -3,24 +3,24 @@
  * actual OEM red used for focus/redline/highlight states across the stock
  * UI — verified by grepping the real CSS, not guessed), and the dark/white
  * palette every stock screen uses. Fonts are the real Tipperary family
- * files from the CMU's own /jci/fonts/, shipped in app/fonts/.
+ * referenced at the CMU's own /jci/fonts/; not copied into USB payloads.
  */
 
 @font-face {
 	font-family: 'Tipperary';
-	src: url('fonts/Tipperary.ttf') format('truetype');
+	src: url('file:///jci/fonts/Tipperary.ttf') format('truetype');
 	font-weight: normal;
 	font-style: normal;
 }
 @font-face {
 	font-family: 'Tipperary';
-	src: url('fonts/TipperarySemibold.ttf') format('truetype');
+	src: url('file:///jci/fonts/TipperarySemibold.ttf') format('truetype');
 	font-weight: 600;
 	font-style: normal;
 }
 @font-face {
 	font-family: 'Tipperary';
-	src: url('fonts/TipperaryBold.ttf') format('truetype');
+	src: url('file:///jci/fonts/TipperaryBold.ttf') format('truetype');
 	font-weight: bold;
 	font-style: normal;
 }
